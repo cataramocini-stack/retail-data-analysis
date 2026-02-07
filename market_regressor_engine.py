@@ -315,21 +315,26 @@ def ingest_to_primary_endpoint(data_point):
     discount = data_point['desconto']
     url = affiliated_uri
     
-    # 1. Pegue o título real (limpando lixo da Amazon)
-    clean_title = title.split(',')[0].replace("Oferta para Membros Prime:", "").replace("Oferta:", "").strip()
+    # 1. Limpeza do título - REMOVIDO split que cortava o nome
+    clean_title = title.replace("Oferta para Membros Prime:", "").replace("Oferta:", "").replace("Oferta -", "").strip()
     # DELETE: "Menor preço em 365 dias"
     clean_title = re.sub(r"Menor preço em \d+ dias", "", clean_title, flags=re.IGNORECASE).strip()
+    # DELETE: porcentagem no início do título
+    clean_title = re.sub(r"^\d+%\s*off\s*[-:]?\s*", "", clean_title, flags=re.IGNORECASE).strip()
+    # Fallback
+    if not clean_title or len(clean_title) < 3:
+        clean_title = "Produto em Oferta"
     
     # 2. Formatação Cirúrgica de Preços
     p_atual = "{:.2f}".format(price_current).replace('.', ',')
-    p_antigo = "{:.2f}".format(price_old).replace('.', ',')
+    p_antigo = "{:.2f}".format(price_old).replace('.', ',') if price_old > 0 else ""
     
-    # 3. MONTAGEM EM LINHA ÚNICA (SEM CABEÇALHO, SEM REPETIR %)
-    # O NOME DO PRODUTO VEM LOGO APÓS "OFERTA -"
-    if price_old > price_current:
-        msg_principal = f"📦 OFERTA - {clean_title} - DE R$ {p_antigo} por R$ {p_atual} ({discount}% OFF) 🔥"
+    # 3. MONTAGEM EM LINHA ÚNICA - NOME DO PRODUTO OBRIGATÓRIO
+    # LINHA ÚNICA: 📦 OFERTA [NOME] - DE R$ X por R$ Y (Z% OFF) 🔥
+    if p_antigo and price_old > price_current:
+        msg_principal = f"📦 OFERTA {clean_title} - DE R$ {p_antigo} por R$ {p_atual} ({discount}% OFF) 🔥"
     else:
-        msg_principal = f"📦 OFERTA - {clean_title} - R$ {p_atual} ({discount}% OFF) 🔥"
+        msg_principal = f"📦 OFERTA {clean_title} - R$ {p_atual} ({discount}% OFF) 🔥"
     
     # 4. OUTPUT FINAL (LINHA ÚNICA + LINK)
     formatted_message = f"{msg_principal}\n{url}"
