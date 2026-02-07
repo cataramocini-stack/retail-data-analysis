@@ -414,24 +414,12 @@ def main():
     print(f"   Variance: {optimal_point['desconto']}%")
     print(f"   Price tensor: {optimal_point['preco']}")
 
-    # Check against processed metadata store for deduplication
-    processed_hashes = load_processed_hashes()
-    if optimal_point["id"] in processed_hashes:
-        print(f"\n[DEDUP] Data hash already exists in metadata store (hash: {optimal_point['id']}). Scanning alternatives...")
-        alternative = None
-        for dp in data_points:
-            if dp["id"] not in processed_hashes:
-                alternative = dp
-                break
-
-        if not alternative:
-            print("[DEDUP] All data points already processed. Pipeline complete.")
-            return
-
-        optimal_point = alternative
-        print(f"\n[DEDUP] Alternative data point selected:")
-        print(f"   Label: {optimal_point['titulo'][:80]}")
-        print(f"   Variance: {optimal_point['desconto']}%")
+    # DISABLED: Deduplication check removed - post any available deal every 20 minutes
+    # Previously checked processed_hashes to avoid reposting
+    # Now posts the best available deal regardless of previous posts
+    print(f"\n[SELECT] Selected deal for posting:")
+    print(f"   Label: {optimal_point['titulo'][:80]}")
+    print(f"   Variance: {optimal_point['desconto']}%")
 
     # Transmit to primary ingestion endpoint
     success = ingest_to_primary_endpoint(optimal_point)
