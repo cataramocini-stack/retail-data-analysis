@@ -212,12 +212,14 @@ def execute_stochastic_sampling():
                     )
                     preco_antigo = preco_antigo_el.inner_text().strip() if preco_antigo_el else ""
                     
-                    # Sanitization with decimal control
-                    def sanitize_price_controlled(p):
+                    # DEFINITIVE sanitization: remove ALL text artifacts + strict 2 decimal places
+                    def sanitize_price_definitive(p):
                         if not p or p == "N/A":
                             return p
+                        # Remove text artifacts like 'PreçodaOferta' and other glued text
+                        p_clean = re.sub(r"[A-Za-z]+", "", p)
                         # Remove EVERYTHING except numbers and comma
-                        p_clean = re.sub(r"[^0-9,]", "", p)
+                        p_clean = re.sub(r"[^0-9,]", "", p_clean)
                         # Remove multiple commas, keep only the first (decimal separator)
                         parts = p_clean.split(",")
                         if len(parts) > 2:
@@ -226,8 +228,16 @@ def execute_stochastic_sampling():
                         p_clean = re.sub(r",+", ",", p_clean)
                         return p_clean.strip() if p_clean.strip() else "N/A"
                     
-                    preco_sanitized = sanitize_price_controlled(preco)
-                    preco_antigo_sanitized = sanitize_price_controlled(preco_antigo)
+                    preco_sanitized = sanitize_price_definitive(preco)
+                    preco_antigo_sanitized = sanitize_price_definitive(preco_antigo)
+                    
+                    # Apply strict 2 decimal formatting to current price
+                    if preco_sanitized != "N/A":
+                        try:
+                            preco_num = float(preco_sanitized.replace(",", "."))
+                            preco_sanitized = f"{round(preco_num, 2):.2f}".replace(".", ",")
+                        except ValueError:
+                            pass
                     
                     # PRIORIDADE 2: OBRIGATORY calculation if no old price OR if old price equals current
                     if (not preco_antigo_sanitized or preco_antigo_sanitized == preco_sanitized) and preco_sanitized != "N/A" and porcentagem > 0:
@@ -297,15 +307,20 @@ def ingest_to_primary_endpoint(data_point):
 
     affiliated_uri = construct_affiliated_uri(data_point["link"], data_point["id"])
 
-    # Build price display with EXTREME sanitization and deduplication check
+    # Build FINAL message with strict template and bold formatting
     preco_atual = data_point["preco"]
     preco_antigo = data_point.get("preco_antigo", "")
     
-    # Final format: single line, strict pattern
+    # Remove marketing noise from title
+    titulo_limpo = re.sub(r"Menor preço em \d+ dias", "", data_point['titulo'], flags=re.IGNORECASE)
+    titulo_limpo = re.sub(r"OFERTA\s*-\s*\d+%\s*off", "", titulo_limpo, flags=re.IGNORECASE)
+    titulo_limpo = titulo_limpo.strip()[:200]
+    
+    # FINAL TEMPLATE: single line with bold formatting
     if preco_antigo and preco_antigo != preco_atual and preco_antigo != "N/A":
-        mensagem = f"📦 OFERTA - {data_point['titulo'][:200]} - DE R$ {preco_antigo} por R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥\n{affiliated_uri}"
+        mensagem = f"📦 **OFERTA - {titulo_limpo} - DE R$ {preco_antigo} por R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥**\n{affiliated_uri}"
     else:
-        mensagem = f"📦 OFERTA - {data_point['titulo'][:200]} - R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥\n{affiliated_uri}"
+        mensagem = f"📦 **OFERTA - {titulo_limpo} - R$ {preco_atual} 🔥**\n{affiliated_uri}"
 
     payload = {"content": mensagem}
 
