@@ -307,20 +307,24 @@ def ingest_to_primary_endpoint(data_point):
 
     affiliated_uri = construct_affiliated_uri(data_point["link"], data_point["id"])
 
-    # Build FINAL message with strict template and bold formatting
+    # EXACT message construction - NO deviations allowed
     preco_atual = data_point["preco"]
     preco_antigo = data_point.get("preco_antigo", "")
     
-    # Remove marketing noise from title
-    titulo_limpo = re.sub(r"Menor preço em \d+ dias", "", data_point['titulo'], flags=re.IGNORECASE)
-    titulo_limpo = re.sub(r"OFERTA\s*-\s*\d+%\s*off", "", titulo_limpo, flags=re.IGNORECASE)
-    titulo_limpo = titulo_limpo.strip()[:200]
+    # Extract clean product name - remove ALL marketing noise
+    titulo = data_point['titulo']
+    # Banish 'Menor preço em 365 dias' forever
+    titulo = re.sub(r"Menor preço em \d+ dias", "", titulo, flags=re.IGNORECASE)
+    # Remove 'OFERTA - XX% off' from beginning
+    titulo = re.sub(r"^OFERTA\s*-\s*\d+%\s*off\s*[-:]?\s*", "", titulo, flags=re.IGNORECASE)
+    # Clean and limit
+    titulo = titulo.strip()[:200]
     
-    # FINAL TEMPLATE: single line with bold formatting
+    # EXACT structure as specified - NO bold, NO extra formatting
     if preco_antigo and preco_antigo != preco_atual and preco_antigo != "N/A":
-        mensagem = f"📦 **OFERTA - {titulo_limpo} - DE R$ {preco_antigo} por R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥**\n{affiliated_uri}"
+        mensagem = f"📦 OFERTA - {titulo} - DE R$ {preco_antigo} por R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥\n{affiliated_uri}"
     else:
-        mensagem = f"📦 **OFERTA - {titulo_limpo} - R$ {preco_atual} 🔥**\n{affiliated_uri}"
+        mensagem = f"📦 OFERTA - {titulo} - R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥\n{affiliated_uri}"
 
     payload = {"content": mensagem}
 
