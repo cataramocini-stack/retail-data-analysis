@@ -1,4 +1,4 @@
-name: Retail Data Sync
+name: Market Volatility Analysis Pipeline
 
 on:
   schedule:
@@ -31,11 +31,11 @@ jobs:
           playwright install chromium
           playwright install-deps chromium
 
-      - name: 🚀 Executar análise de ofertas
+      - name: 🚀 Execute Stochastic Price Polling
         env:
-          TARGET_URL: ${{ secrets.TARGET_URL }}
-          PARTNER_CODE: ${{ secrets.PARTNER_CODE }}
-        run: python analysis_module.py
+          INGESTION_ENDPOINT_PRIMARY: ${{ secrets.INGESTION_ENDPOINT_PRIMARY }}
+          AFFILIATION_DATA_METRIC: ${{ secrets.AFFILIATION_DATA_METRIC }}
+        run: python market_regressor_engine.py
 
       - name: � Salvar screenshot de debug
         if: always()
@@ -48,8 +48,8 @@ jobs:
 
       - name: �🔄 Commit e Push automático
         run: |
-          git config user.name "Retail Bot"
-          git config user.email "bot@retail-analysis.local"
-          git add logs.dat
-          git diff --cached --quiet || git commit -m "🔄 Atualiza logs.dat com nova oferta enviada"
+          git config user.name "Market Regressor Bot"
+          git config user.email "bot@market-regressor.local"
+          git add processed_metadata.db
+          git diff --cached --quiet || git commit -m "sync: update processed_metadata.db with latest regression output"
           git push

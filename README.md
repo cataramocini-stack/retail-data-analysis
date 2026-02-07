@@ -1,26 +1,53 @@
-# 📊 Predictive Retail Engine & Macro-Trend Analysis
+# 📊 Market Regressor Engine
 
-## 📈 Overview
-Este repositório contém uma estrutura avançada de **Engenharia de Dados** voltada para a captura e análise volumétrica de indicadores de preços no varejo digital brasileiro. O motor utiliza técnicas de **Headless Automation** para monitorar flutuações de mercado em tempo real, permitindo a identificação de anomalias estatísticas em catálogos de larga escala.
+Stochastic price volatility analyzer for the Brazilian e-commerce market index. Performs automated regression analysis on retail pricing data and transmits normalized data packets to a configurable ingestion endpoint.
 
-## 🧠 Core Objectives
-* **Análise de Volatilidade**: Monitoramento de *Price Drops* superiores a 2 sigma (desvio padrão) da média de mercado.
-* **Filtro de Relevância**: Algoritmo de priorização baseado em margem de desconto e custo-benefício.
-* **Persistence Layer**: Implementação de um sistema de log transacional para evitar colisão de dados e redundância analítica.
+## ⚙️ Core Capabilities
 
-## 🛠️ Architecture & Tech Stack
-O sistema foi arquitetado para ser resiliente e escalável, utilizando:
-* **Python 3.10+**: Core analítico e processamento de strings.
-* **Asynchronous Automation Layer**: Para interação de baixo nível com o DOM de plataformas de e-commerce.
-* **CI/CD Data Pipeline**: Orquestração via GitHub Actions para processamento distribuído.
-* **Data Sink (Webhook)**: Exportação de resultados processados para terminais de visualização (Discord/Slack).
+- 🔬 **Stochastic Price Polling** — Headless chromium-based data collection via Playwright + Stealth
+- 📉 **Variance Threshold Filtering** — Isolates data points exceeding configurable volatility coefficient (default: 20%)
+- 🏆 **Optimal Data Point Selection** — Ranks by highest variance coefficient
+- 🔗 **Affiliation Metric Injection** — Appends configurable affiliation parameter to output URIs
+- ✅ **Deduplication Engine** — Cross-references against `processed_metadata.db` persistent store
+- 🔄 **Automated Pipeline** — Scheduled execution via GitHub Actions (20-minute polling interval)
 
-## ⚙️ Statistical Parameters (Environment Variables)
-Para garantir a integridade do pipeline, as seguintes métricas devem ser configuradas:
-* `TARGET_URL`: Endpoint de destino para o fluxo de dados processados.
-* `PARTNER_CODE`: Identificador de rastreabilidade para atribuição de métricas de conversão.
+## 🚀 Configuration
 
-## 📂 Repository Structure
-* `analysis_module.py`: O núcleo do motor de decisão estatística.
-* `logs.dat`: Database flat-file para controle de estado e idempotência.
-* `.github/workflows/`: Orquestrador de jobs temporais.
+### 1. Environment Variables
+
+Create a `.env` file in the project root (local development):
+
+```env
+INGESTION_ENDPOINT_PRIMARY=https://discord.com/api/webhooks/YOUR_WEBHOOK_HERE
+AFFILIATION_DATA_METRIC=your-affiliation-tag
+```
+
+### 2. GitHub Secrets
+
+Configure the following **Secrets** in the repository (`Settings > Secrets > Actions`):
+
+| Secret | Description |
+|---|---|
+| `INGESTION_ENDPOINT_PRIMARY` | Primary data ingestion endpoint URI |
+| `AFFILIATION_DATA_METRIC` | Affiliation parameter for URI construction |
+
+### 3. Local Execution
+
+```bash
+pip install -r requirements.txt
+playwright install chromium
+python market_regressor_engine.py
+```
+
+## 📂 Project Structure
+
+```
+retail-data-analysis/
+├── .github/workflows/data_sync.yml    # Market Volatility Analysis Pipeline
+├── market_regressor_engine.py          # Stochastic Price Polling Engine
+├── processed_metadata.db              # Persistent metadata store
+├── requirements.txt                    # Python dependencies
+├── .env.example                        # Environment configuration template
+├── .gitignore                          # VCS exclusion rules
+└── README.md                           # Documentation
+```
