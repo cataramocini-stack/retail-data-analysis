@@ -6,7 +6,6 @@ Busca as melhores ofertas na Amazon Brasil e envia para o Webhook configurado.
 
 import os
 import re
-import json
 import subprocess
 import requests
 from dotenv import load_dotenv
@@ -102,54 +101,48 @@ def buscar_ofertas():
 
         try:
             page.goto(AMAZON_OFERTAS_URL, wait_until="domcontentloaded", timeout=60000)
-            print("📄 Página de ofertas carregada (domcontentloaded)!")
+            print("📄 Página de ofertas carregada!")
 
             # Aguarda conteúdo dinâmico renderizar
             page.wait_for_timeout(10000)
 
-            # Screenshot de debug APÓS espera
+            # Screenshot de debug
             page.screenshot(path=debug_path, full_page=True)
-            print(f"📸 Screenshot de debug salvo em: {debug_path}")
-            print(f"DEBUG: Arquivo existe? {os.path.exists(debug_path)}")
+            print("📸 Screenshot de debug salvo.")
 
             # Scroll para carregar mais ofertas
             for _ in range(5):
                 page.evaluate("window.scrollBy(0, window.innerHeight)")
                 page.wait_for_timeout(2000)
 
-            # Log do título da página
-            page_title = page.title()
-            print(f"📋 Título da página: {page_title}")
-            print(f"📋 URL atual: {page.url}")
-
-            # Estratégia 1: Container principal de ofertas
+            # Estratégia 1 (principal): Seletores Amazon clássicos
             cards = page.query_selector_all(
-                '[data-testid="grid-deals-container"] > div, '
-                '[data-testid="deal-card"]'
+                '.shoveler-cell, '
+                '.a-list-item, '
+                'div[data-deal-id], '
+                'div[id*="deal"], '
+                'li[class*="deal"]'
             )
-            print(f"📦 Estratégia 1 (data-testid): {len(cards)} cards")
+            print(f"📦 Estratégia 1 (shoveler/list-item/deal): {len(cards)} cards")
 
-            # Estratégia 2: Seletores genéricos de grid de ofertas
+            # Estratégia 2: data-testid de ofertas
+            if len(cards) == 0:
+                cards = page.query_selector_all(
+                    '[data-testid="grid-deals-container"] > div, '
+                    '[data-testid="deal-card"]'
+                )
+                print(f"📦 Estratégia 2 (data-testid): {len(cards)} cards")
+
+            # Estratégia 3: Classes DealCard
             if len(cards) == 0:
                 cards = page.query_selector_all(
                     'div[class*="DealCard"], '
                     'div[class*="deal-card"], '
                     'div[class*="dealCard"]'
                 )
-                print(f"📦 Estratégia 2 (DealCard classes): {len(cards)} cards")
+                print(f"📦 Estratégia 3 (DealCard classes): {len(cards)} cards")
 
-            # Estratégia 3: Seletores Amazon clássicos
-            if len(cards) == 0:
-                cards = page.query_selector_all(
-                    '.shoveler-cell, '
-                    '.a-list-item, '
-                    'div[data-deal-id], '
-                    'div[id*="deal"], '
-                    'li[class*="deal"]'
-                )
-                print(f"📦 Estratégia 3 (shoveler/list-item/deal): {len(cards)} cards")
-
-            # Estratégia 4: Links de produto com desconto visível
+            # Estratégia 4: Links de produto / cardui
             if len(cards) == 0:
                 cards = page.query_selector_all(
                     'div.a-section a[href*="/dp/"], '
@@ -158,26 +151,7 @@ def buscar_ofertas():
                 )
                 print(f"📦 Estratégia 4 (links dp/deal/cardui): {len(cards)} cards")
 
-            # Estratégia 5: Último recurso — qualquer bloco com texto de porcentagem
-            if len(cards) == 0:
-                all_sections = page.query_selector_all('div.a-section')
-                cards = []
-                for sec in all_sections:
-                    txt = sec.inner_text()
-                    if "%" in txt and ("OFF" in txt.upper() or "DESCONTO" in txt.upper() or "R$" in txt):
-                        cards.append(sec)
-                print(f"📦 Estratégia 5 (texto com %/OFF/R$): {len(cards)} cards")
-
-            print(f"\n📦 Total de cards encontrados: {len(cards)}")
-
-            # Dump HTML para diagnóstico se nenhum card foi encontrado
-            if len(cards) == 0:
-                html_content = page.content()
-                print("\n🚨 DIAGNÓSTICO: Nenhum card encontrado! Dump do HTML (primeiros 2000 chars):")
-                print(html_content[:2000])
-                print("\n🚨 DIAGNÓSTICO: Últimos 1000 chars do HTML:")
-                print(html_content[-1000:])
-                print(f"\n🚨 DIAGNÓSTICO: Tamanho total do HTML: {len(html_content)} chars")
+            print(f"📦 Total de cards encontrados: {len(cards)}")
 
             for i, card in enumerate(cards):
                 try:
@@ -254,19 +228,11 @@ def buscar_ofertas():
 
         except Exception as e:
             print(f"❌ Erro ao acessar a página de ofertas: {e}")
-            # Tenta capturar screenshot mesmo em caso de erro
             try:
                 page.screenshot(path=debug_path, full_page=True)
-                print(f"📸 Screenshot de erro salvo em: {debug_path}")
+                print("📸 Screenshot de erro salvo.")
             except Exception:
-                print("⚠️ Não foi possível salvar screenshot de erro.")
-            # Dump HTML mesmo em caso de erro
-            try:
-                html_content = page.content()
-                print(f"\n🚨 HTML da página de erro (primeiros 2000 chars):")
-                print(html_content[:2000])
-            except Exception:
-                print("⚠️ Não foi possível capturar HTML.")
+                pass
         finally:
             browser.close()
 
