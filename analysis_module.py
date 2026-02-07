@@ -257,7 +257,7 @@ def enviar_para_webhook(oferta):
     link_afiliado = montar_link_afiliado(oferta["link"])
 
     mensagem = (
-        f"� **OFERTA - {oferta['titulo'][:200]} - {oferta['preco']}** 🔥\n"
+        f"📦 **OFERTA - {oferta['titulo'][:200]} - {oferta['preco']} ({oferta['desconto']}% OFF)** 🔥\n"
         f"{link_afiliado}"
     )
 
