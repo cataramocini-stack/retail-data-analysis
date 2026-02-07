@@ -103,9 +103,11 @@ def buscar_ofertas():
             print("📄 Página de ofertas carregada com sucesso!")
 
             # Screenshot de debug para verificar o que o robô está vendo
-            debug_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.png")
-            page.screenshot(path=debug_path, full_page=False)
+            debug_path = os.path.join(os.getcwd(), "debug.png")
+            page.screenshot(path=debug_path, full_page=True)
             print(f"📸 Screenshot de debug salvo em: {debug_path}")
+            print(f"DEBUG: Screenshot gerado em {os.path.abspath('debug.png')}")
+            print(f"DEBUG: Arquivo existe? {os.path.exists(debug_path)}")
 
             # Aguarda conteúdo dinâmico renderizar
             page.wait_for_timeout(8000)
@@ -166,6 +168,15 @@ def buscar_ofertas():
                 print(f"📦 Estratégia 5 (texto com %/OFF/R$): {len(cards)} cards")
 
             print(f"\n📦 Total de cards encontrados: {len(cards)}")
+
+            # Dump HTML para diagnóstico se nenhum card foi encontrado
+            if len(cards) == 0:
+                html_content = page.content()
+                print("\n🚨 DIAGNÓSTICO: Nenhum card encontrado! Dump do HTML (primeiros 2000 chars):")
+                print(html_content[:2000])
+                print("\n🚨 DIAGNÓSTICO: Últimos 1000 chars do HTML:")
+                print(html_content[-1000:])
+                print(f"\n🚨 DIAGNÓSTICO: Tamanho total do HTML: {len(html_content)} chars")
 
             for i, card in enumerate(cards):
                 try:
