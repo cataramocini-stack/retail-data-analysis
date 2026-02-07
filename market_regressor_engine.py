@@ -195,7 +195,7 @@ def execute_stochastic_sampling():
                             elif deal_match:
                                 data_hash = deal_match.group(1)
 
-                    # Extract price tensor from DOM
+                    # Extract current price tensor from DOM
                     preco_el = card.query_selector(
                         'span.a-price span.a-offscreen, '
                         'span.a-price-whole, '
@@ -206,6 +206,45 @@ def execute_stochastic_sampling():
                         preco_match = re.search(r"R\$\s*[\d.,]+", card_text)
                         preco = preco_match.group(0) if preco_match else "N/A"
 
+                    # Extract old price (DE) from strikethrough or list price
+                    preco_antigo_el = card.query_selector(
+                        'span.a-price.a-text-price span.a-offscreen, '
+                        'span[data-a-color="base"] span.a-offscreen, '
+                        'span.a-strike-through, '
+                        'span[class*="listPrice"]'
+                    )
+                    preco_antigo = preco_antigo_el.inner_text().strip() if preco_antigo_el else ""
+                    if not preco_antigo:
+                        # Try regex for "DE R$ X" pattern
+                        preco_antigo_match = re.search(r"DE\s*R\$\s*[\d.,]+", card_text, re.IGNORECASE)
+                        preco_antigo = preco_antigo_match.group(0) if preco_antigo_match else ""
+                    
+                    # Sanitize prices: remove spaces between numbers and comma
+                    def sanitize_price(p):
+                        if not p or p == "N/A":
+                            return p
+                        # Remove R$ prefix and spaces
+                        p_clean = re.sub(r"R\$\s*", "", p, flags=re.IGNORECASE)
+                        # Remove spaces between digits and comma/period
+                        p_clean = re.sub(r"\s+([.,])", r"\1", p_clean)
+                        # Remove other spaces
+                        p_clean = re.sub(r"\s+", "", p_clean)
+                        return p_clean.strip()
+                    
+                    preco_sanitized = sanitize_price(preco)
+                    preco_antigo_sanitized = sanitize_price(preco_antigo)
+                    
+                    # If no old price found, calculate reverse from discount
+                    if not preco_antigo_sanitized and preco_sanitized != "N/A" and porcentagem > 0:
+                        try:
+                            # Extract numeric value from current price
+                            preco_num = float(preco_sanitized.replace(",", "."))
+                            # Reverse calculate: old_price = current_price / (1 - discount/100)
+                            preco_antigo_calc = preco_num / (1 - porcentagem / 100)
+                            preco_antigo_sanitized = f"{preco_antigo_calc:.2f}".replace(".", ",")
+                        except (ValueError, ZeroDivisionError):
+                            preco_antigo_sanitized = ""
+
                     # Extract thumbnail URI
                     img_el = card.query_selector("img[src]")
                     img_url = img_el.get_attribute("src") if img_el else ""
@@ -214,7 +253,8 @@ def execute_stochastic_sampling():
                         "id": data_hash,
                         "titulo": titulo,
                         "desconto": porcentagem,
-                        "preco": preco,
+                        "preco": preco_sanitized,
+                        "preco_antigo": preco_antigo_sanitized,
                         "link": link,
                         "imagem": img_url,
                     })
@@ -261,14 +301,21 @@ def ingest_to_primary_endpoint(data_point):
 
     affiliated_uri = construct_affiliated_uri(data_point["link"], data_point["id"])
 
-    # Normalize price tensor: strip line breaks, whitespace artifacts, and currency prefix
-    price_normalized = " ".join(data_point["preco"].replace("\n", " ").split())
-    price_normalized = re.sub(r"^R\$\s*", "", price_normalized)
-
-    mensagem = (
-        f"📦 **OFERTA - {data_point['titulo'][:200]} - R$ {price_normalized} ({data_point['desconto']}% OFF)** 🔥\n"
-        f"{affiliated_uri}"
-    )
+    # Build price display with old price if available and different
+    preco_atual = data_point["preco"]
+    preco_antigo = data_point.get("preco_antigo", "")
+    
+    # Format message based on price availability
+    if preco_antigo and preco_antigo != preco_atual and preco_antigo != "N/A":
+        mensagem = (
+            f"📦 OFERTA - {data_point['titulo'][:200]} - DE R$ {preco_antigo} por R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥\n"
+            f"{affiliated_uri}"
+        )
+    else:
+        mensagem = (
+            f"📦 OFERTA - {data_point['titulo'][:200]} - R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥\n"
+            f"{affiliated_uri}"
+        )
 
     payload = {"content": mensagem}
 
