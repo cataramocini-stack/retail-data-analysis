@@ -1,53 +1,35 @@
-# 📊 Retail Data Analysis
+Predictive Retail Engine & Macro-Trend Analysis
+📈 Overview
+Este repositório contém uma estrutura avançada de Engenharia de Dados voltada para a captura e análise volumétrica de indicadores de preços no varejo digital brasileiro. O motor utiliza técnicas de Headless Automation para monitorar flutuações de mercado em tempo real, permitindo a identificação de anomalias estatísticas em catálogos de larga escala.
 
-Bot automatizado que busca as melhores promoções na Amazon Brasil e envia para um Webhook Discord.
+🧠 Core Objectives
+Análise de Volatilidade: Monitoramento de Price Drops superiores a 2 sigma (desvio padrão) da média de mercado.
 
-## ⚙️ Funcionalidades
+Filtro de Relevância: Algoritmo de priorização baseado em margem de desconto e custo-benefício.
 
-- 🔍 Busca ofertas em `amazon.com.br/ofertas` usando **Playwright + Stealth**
-- 📉 Filtra apenas itens com **mais de 20% de desconto**
-- 🏆 Seleciona a **melhor oferta** (maior desconto)
-- 🔗 Adiciona **tag de afiliado** aos links
-- ✅ Verifica duplicatas no arquivo `logs.dat`
-- 🔄 Execução automática via **GitHub Actions** a cada 20 minutos
+Persistence Layer: Implementação de um sistema de log transacional para evitar colisão de dados e redundância analítica.
 
-## 🚀 Configuração
+🛠️ Architecture & Tech Stack
+O sistema foi arquitetado para ser resiliente e escalável, utilizando:
 
-### 1. Variáveis de Ambiente
+Python 3.10+: Core analítico e processamento de strings.
 
-Crie um arquivo `.env` na raiz do projeto (para desenvolvimento local):
+Asynchronous Automation Layer: Para interação de baixo nível com o DOM de plataformas de e-commerce.
 
-```env
-TARGET_URL=https://discord.com/api/webhooks/SEU_WEBHOOK_AQUI
-PARTNER_CODE=sua-tag-de-afiliado
-```
+CI/CD Data Pipeline: Orquestração via GitHub Actions para processamento distribuído.
 
-### 2. Secrets no GitHub
+Data Sink (Webhook): Exportação de resultados processados para terminais de visualização (Discord/Slack).
 
-Configure os seguintes **Secrets** no repositório (`Settings > Secrets > Actions`):
+⚙️ Statistical Parameters (Environment Variables)
+Para garantir a integridade do pipeline, as seguintes métricas devem ser configuradas:
 
-| Secret | Descrição |
-|---|---|
-| `TARGET_URL` | URL do Webhook Discord |
-| `PARTNER_CODE` | Tag de afiliado Amazon |
+TARGET_URL: Endpoint de destino para o fluxo de dados processados.
 
-### 3. Instalação Local
+PARTNER_CODE: Identificador de rastreabilidade para atribuição de métricas de conversão.
 
-```bash
-pip install -r requirements.txt
-playwright install chromium
-python analysis_module.py
-```
+📂 Repository Structure
+analysis_module.py: O núcleo do motor de decisão estatística.
 
-## 📂 Estrutura
+logs.dat: Database flat-file para controle de estado e idempotência.
 
-```
-retail-data-analysis/
-├── .github/workflows/data_sync.yml   # GitHub Actions (cron 20min)
-├── analysis_module.py                 # Script principal
-├── logs.dat                           # IDs já enviados
-├── requirements.txt                   # Dependências Python
-├── .env.example                       # Exemplo de variáveis de ambiente
-├── .gitignore                         # Arquivos ignorados pelo Git
-└── README.md                          # Documentação
-```
+.github/workflows/: Orquestrador de jobs temporais.
