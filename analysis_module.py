@@ -240,12 +240,20 @@ def buscar_ofertas():
     return ofertas
 
 
-def montar_link_afiliado(link):
-    """Adiciona a tag de afiliado ao link do produto."""
-    if not link or not PARTNER_CODE:
+def montar_link_afiliado(link, deal_id):
+    """Gera um link limpo com apenas o ASIN/deal e a tag de afiliado."""
+    if not link:
         return link
-    separador = "&" if "?" in link else "?"
-    return f"{link}{separador}tag={PARTNER_CODE}"
+    # Tenta construir link limpo apenas com /dp/ASIN
+    asin_match = re.search(r"/dp/([A-Z0-9]{10})", link)
+    if asin_match:
+        link_limpo = f"https://www.amazon.com.br/dp/{asin_match.group(1)}"
+    else:
+        # Remove query params de rastreio, mantém só o path base
+        link_limpo = link.split("?")[0].split("ref=")[0].rstrip("/")
+    if PARTNER_CODE:
+        link_limpo = f"{link_limpo}?tag={PARTNER_CODE}"
+    return link_limpo
 
 
 def enviar_para_webhook(oferta):
@@ -254,10 +262,14 @@ def enviar_para_webhook(oferta):
         print("❌ TARGET_URL não configurada! Defina a variável de ambiente.")
         return False
 
-    link_afiliado = montar_link_afiliado(oferta["link"])
+    link_afiliado = montar_link_afiliado(oferta["link"], oferta["id"])
+
+    # Limpa o preço: remove quebras de linha, espaços extras e "R$" duplicado
+    preco_limpo = " ".join(oferta["preco"].replace("\n", " ").split())
+    preco_limpo = re.sub(r"^R\$\s*", "", preco_limpo)
 
     mensagem = (
-        f"📦 **OFERTA - {oferta['titulo'][:200]} - {oferta['preco']} ({oferta['desconto']}% OFF)** 🔥\n"
+        f"📦 **OFERTA - {oferta['titulo'][:200]} - R$ {preco_limpo} ({oferta['desconto']}% OFF)** 🔥\n"
         f"{link_afiliado}"
     )
 
