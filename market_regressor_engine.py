@@ -165,18 +165,42 @@ def execute_stochastic_sampling():
                         continue
 
                     # Extract product label from DOM subtree
-                    titulo_el = card.query_selector(
-                        'span[class*="title"], '
-                        'a[class*="title"], '
-                        'span.a-truncate-full, '
-                        'div[class*="Title"], '
-                        'span.a-text-normal, '
-                        'a span'
-                    )
-                    titulo = titulo_el.inner_text().strip() if titulo_el else ""
-                    if not titulo:
+                    # Tenta múltiplos seletores para garantir o nome real do produto
+                    titulo = ""
+                    
+                    # Opção 1: Alt text da imagem (geralmente tem o nome limpo)
+                    img_el = card.query_selector("img[src]")
+                    if img_el:
+                        titulo = img_el.get_attribute("alt") or ""
+                    
+                    # Opção 2: Seletores de título específicos
+                    if not titulo or len(titulo) < 5:
+                        titulo_el = card.query_selector(
+                            'h2 a span, '
+                            'h2 span, '
+                            '[data-cy="deal-product-title"], '
+                            'span.a-truncate-full, '
+                            'div.a-section a[href*="/dp/"]'
+                        )
+                        if titulo_el:
+                            titulo = titulo_el.inner_text().strip()
+                    
+                    # Opção 3: Extrair do texto do card, filtrando linhas relevantes
+                    if not titulo or len(titulo) < 5 or titulo.lower() in ["oferta", "deals"]:
                         linhas = [l.strip() for l in card_text.split("\n") if len(l.strip()) > 10]
-                        titulo = linhas[0] if linhas else f"DataPoint #{i+1}"
+                        # Filtrar linhas que não são preços, descontos ou marketing
+                        for linha in linhas:
+                            linha_lower = linha.lower()
+                            if ("oferta" not in linha_lower or len(linha) > 20) and \
+                               "r$" not in linha_lower and \
+                               "%" not in linha and \
+                               "menor preço" not in linha_lower:
+                                titulo = linha
+                                break
+                    
+                    # Fallback final
+                    if not titulo or len(titulo) < 3 or titulo.lower() == "oferta":
+                        titulo = f"Produto #{i+1}"
 
                     # Extract reference URI from anchor elements
                     link_el = card.query_selector('a[href*="/dp/"], a[href*="/deal/"], a[href]')
