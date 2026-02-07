@@ -307,24 +307,43 @@ def ingest_to_primary_endpoint(data_point):
 
     affiliated_uri = construct_affiliated_uri(data_point["link"], data_point["id"])
 
-    # EXACT message construction - NO deviations allowed
-    preco_atual = data_point["preco"]
-    preco_antigo = data_point.get("preco_antigo", "")
+    # STRICT message assembly - EXACT pattern as specified
+    # 1. Extract clean product name (title)
+    title = data_point['titulo']
+    # BANISHED: Remove all marketing noise
+    title = re.sub(r"Menor preço em \d+ dias", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"OFERTA\s*-\s*\d+%\s*off", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"R\$\s*Por:", "", title, flags=re.IGNORECASE)
+    title = title.strip()[:200]
     
-    # Extract clean product name - remove ALL marketing noise
-    titulo = data_point['titulo']
-    # Banish 'Menor preço em 365 dias' forever
-    titulo = re.sub(r"Menor preço em \d+ dias", "", titulo, flags=re.IGNORECASE)
-    # Remove 'OFERTA - XX% off' from beginning
-    titulo = re.sub(r"^OFERTA\s*-\s*\d+%\s*off\s*[-:]?\s*", "", titulo, flags=re.IGNORECASE)
-    # Clean and limit
-    titulo = titulo.strip()[:200]
+    # 2. Format prices with EXACTLY two decimal places and comma
+    try:
+        price_current = float(data_point["preco"].replace(",", "."))
+        p_atual = "{:.2f}".format(price_current).replace('.', ',')
+    except (ValueError, AttributeError):
+        p_atual = data_point["preco"]
     
-    # EXACT structure as specified - NO bold, NO extra formatting
-    if preco_antigo and preco_antigo != preco_atual and preco_antigo != "N/A":
-        mensagem = f"📦 OFERTA - {titulo} - DE R$ {preco_antigo} por R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥\n{affiliated_uri}"
+    price_old = data_point.get("preco_antigo", "")
+    if price_old and price_old != "N/A" and price_old != data_point["preco"]:
+        try:
+            price_old_float = float(price_old.replace(",", "."))
+            p_antigo = "{:.2f}".format(price_old_float).replace('.', ',')
+        except (ValueError, AttributeError):
+            p_antigo = price_old
     else:
-        mensagem = f"📦 OFERTA - {titulo} - R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥\n{affiliated_uri}"
+        p_antigo = ""
+    
+    # 3. SINGLE LINE assembly (PROHIBITED: headers or extra text lines)
+    discount = data_point['desconto']
+    if p_antigo and p_antigo != p_atual:
+        msg = f"📦 OFERTA - {title} - DE R$ {p_antigo} por R$ {p_atual} ({discount}% OFF) 🔥"
+    else:
+        msg = f"📦 OFERTA - {title} - R$ {p_atual} ({discount}% OFF) 🔥"
+    
+    # 4. Add ONLY the link on the line below
+    final_output = f"{msg}\n{affiliated_uri}"
+    
+    mensagem = final_output
 
     payload = {"content": mensagem}
 
