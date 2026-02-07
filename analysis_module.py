@@ -256,26 +256,12 @@ def enviar_para_webhook(oferta):
 
     link_afiliado = montar_link_afiliado(oferta["link"])
 
-    embed = {
-        "title": f"🔥 {oferta['desconto']}% OFF — {oferta['titulo'][:200]}",
-        "url": link_afiliado,
-        "color": 0xFF4500,
-        "fields": [
-            {"name": "💰 Preço", "value": oferta["preco"], "inline": True},
-            {"name": "📉 Desconto", "value": f"{oferta['desconto']}%", "inline": True},
-        ],
-        "footer": {"text": "Retail Data Analysis • Amazon BR"},
-    }
+    mensagem = (
+        f"� **OFERTA - {oferta['titulo'][:200]} - {oferta['preco']}** 🔥\n"
+        f"{link_afiliado}"
+    )
 
-    if oferta.get("imagem"):
-        embed["thumbnail"] = {"url": oferta["imagem"]}
-
-    if link_afiliado:
-        embed["fields"].append(
-            {"name": "🔗 Link", "value": f"[Acessar oferta]({link_afiliado})", "inline": False}
-        )
-
-    payload = {"embeds": [embed]}
+    payload = {"content": mensagem}
 
     try:
         response = requests.post(
