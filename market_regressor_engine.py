@@ -307,49 +307,34 @@ def ingest_to_primary_endpoint(data_point):
 
     affiliated_uri = construct_affiliated_uri(data_point["link"], data_point["id"])
 
-    # REWRITE: Message assembly with INEGOTIABLE rules
-    # 1. Extract and clean product name
+    # EXACT message construction as specified
     title = data_point['titulo']
-    # LIMPEZA DE LIXO: Remove marketing garbage
-    title = re.sub(r"Menor preço em \d+ dias", "", title, flags=re.IGNORECASE)
-    title = re.sub(r"OFERTA\s*-\s*\d+%\s*off", "", title, flags=re.IGNORECASE)
-    title = re.sub(r"R\$\s*Por:", "", title, flags=re.IGNORECASE)
-    title = re.sub(r"PreçodaOferta", "", title, flags=re.IGNORECASE)
-    title = title.strip()
-    # Fallback for empty title
-    if not title:
-        title = "Produto em Oferta"
-    title = title[:200]
-    
-    # 2. Format prices with round(valor, 2) and comma
-    try:
-        price_current = float(data_point["preco"].replace(",", "."))
-        p_atual = str(round(price_current, 2)).replace('.', ',')
-    except (ValueError, AttributeError):
-        p_atual = data_point["preco"]
-    
-    # Get old price
-    price_old = data_point.get("preco_antigo", "")
-    if price_old and price_old != "N/A":
-        try:
-            price_old_float = float(price_old.replace(",", "."))
-            p_antigo = str(round(price_old_float, 2)).replace('.', ',')
-        except (ValueError, AttributeError):
-            p_antigo = price_old
-    else:
-        p_antigo = ""
-    
-    # 3. SINGLE LINE assembly - NOME DO PRODUTO OBRIGATÓRIO
+    price_current = float(data_point["preco"].replace(",", ".")) if data_point["preco"] else 0
+    price_old_raw = data_point.get("preco_antigo", "")
+    price_old = float(price_old_raw.replace(",", ".")) if price_old_raw and price_old_raw != "N/A" else 0
     discount = data_point['desconto']
-    if p_antigo and p_antigo != p_atual and p_antigo != "0,00":
-        # COM preço antigo: OFERTA - NOME - DE R$ X por R$ Y (Z% OFF)
-        msg = f"📦 **OFERTA - {title} - DE R$ {p_antigo} por R$ {p_atual} ({discount}% OFF) 🔥**"
-    else:
-        # SEM preço antigo: OFERTA - NOME - R$ X (Z% OFF)
-        msg = f"📦 **OFERTA - {title} - R$ {p_atual} ({discount}% OFF) 🔥**"
+    url = affiliated_uri
     
-    # 4. Add link on separate line
-    mensagem = f"{msg}\n{affiliated_uri}"
+    # 1. Limpeza radical de strings
+    clean_title = title.replace("Oferta:", "").strip()
+    # PROIBIDO: Remover "Menor preço em 365 dias"
+    clean_title = re.sub(r"Menor preço em \d+ dias", "", clean_title, flags=re.IGNORECASE).strip()
+    if not clean_title:
+        clean_title = "Produto em Oferta"
+    
+    p_atual = "{:.2f}".format(price_current).replace('.', ',')
+    p_antigo = "{:.2f}".format(price_old).replace('.', ',') if price_old > 0 else ""
+    
+    # 2. Construção da LINHA ÚNICA (Sem cabeçalhos extras)
+    if price_old > price_current:
+        line1 = f"📦 OFERTA - {clean_title} - DE R$ {p_antigo} por R$ {p_atual} ({discount}% OFF) 🔥"
+    else:
+        line1 = f"📦 OFERTA - {clean_title} - R$ {p_atual} ({discount}% OFF) 🔥"
+    
+    # 3. Resultado Final
+    formatted_message = f"{line1}\n{url}"
+    
+    mensagem = formatted_message
 
     payload = {"content": mensagem}
 
