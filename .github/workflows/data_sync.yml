@@ -1,0 +1,46 @@
+name: Retail Data Sync
+
+on:
+  schedule:
+    # Executa a cada 20 minutos
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout do repositório
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🐍 Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 📦 Instalar dependências
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: 🚀 Executar análise de ofertas
+        env:
+          TARGET_URL: ${{ secrets.TARGET_URL }}
+          PARTNER_CODE: ${{ secrets.PARTNER_CODE }}
+        run: python analysis_module.py
+
+      - name: 🔄 Commit e Push automático
+        run: |
+          git config user.name "Retail Bot"
+          git config user.email "bot@retail-analysis.local"
+          git add logs.dat
+          git diff --cached --quiet || git commit -m "🔄 Atualiza logs.dat com nova oferta enviada"
+          git push
