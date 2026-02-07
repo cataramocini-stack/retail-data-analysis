@@ -99,41 +99,80 @@ def buscar_ofertas():
         stealth_sync(page)
 
         try:
-            page.goto(AMAZON_OFERTAS_URL, wait_until="domcontentloaded", timeout=60000)
+            page.goto(AMAZON_OFERTAS_URL, wait_until="networkidle", timeout=90000)
             print("📄 Página de ofertas carregada com sucesso!")
 
-            # Aguarda os cards de ofertas aparecerem
-            page.wait_for_timeout(5000)
+            # Screenshot de debug para verificar o que o robô está vendo
+            debug_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.png")
+            page.screenshot(path=debug_path, full_page=False)
+            print(f"📸 Screenshot de debug salvo em: {debug_path}")
+
+            # Aguarda conteúdo dinâmico renderizar
+            page.wait_for_timeout(8000)
 
             # Scroll para carregar mais ofertas
-            for _ in range(3):
+            for _ in range(5):
                 page.evaluate("window.scrollBy(0, window.innerHeight)")
                 page.wait_for_timeout(2000)
 
-            # Busca os cards de ofertas na página
-            cards = page.query_selector_all(
-                'div[data-testid="deal-card"], '
-                'div.DealCardDynamic-module__dealCard_3BbBP, '
-                'div[class*="DealCard"], '
-                'div.a-section.a-spacing-none.a-spacing-top-small'
-            )
+            # Log do HTML para debug dos seletores
+            page_title = page.title()
+            print(f"📋 Título da página: {page_title}")
 
-            print(f"📦 Encontrados {len(cards)} cards de ofertas na página.")
+            # Estratégia 1: Container principal de ofertas
+            cards = page.query_selector_all(
+                '[data-testid="grid-deals-container"] > div, '
+                '[data-testid="deal-card"]'
+            )
+            print(f"📦 Estratégia 1 (data-testid): {len(cards)} cards")
+
+            # Estratégia 2: Seletores genéricos de grid de ofertas
+            if len(cards) == 0:
+                cards = page.query_selector_all(
+                    'div[class*="DealCard"], '
+                    'div[class*="deal-card"], '
+                    'div[class*="dealCard"]'
+                )
+                print(f"📦 Estratégia 2 (DealCard classes): {len(cards)} cards")
+
+            # Estratégia 3: Seletores Amazon clássicos
+            if len(cards) == 0:
+                cards = page.query_selector_all(
+                    '.shoveler-cell, '
+                    '.a-list-item, '
+                    'div[data-deal-id], '
+                    'div[id*="deal"], '
+                    'li[class*="deal"]'
+                )
+                print(f"📦 Estratégia 3 (shoveler/list-item/deal): {len(cards)} cards")
+
+            # Estratégia 4: Links de produto com desconto visível
+            if len(cards) == 0:
+                cards = page.query_selector_all(
+                    'div.a-section a[href*="/dp/"], '
+                    'div.a-section a[href*="/deal/"], '
+                    'div.a-cardui'
+                )
+                print(f"📦 Estratégia 4 (links dp/deal/cardui): {len(cards)} cards")
+
+            # Estratégia 5: Último recurso — qualquer bloco com texto de porcentagem
+            if len(cards) == 0:
+                all_sections = page.query_selector_all('div.a-section')
+                cards = []
+                for sec in all_sections:
+                    txt = sec.inner_text()
+                    if "%" in txt and ("OFF" in txt.upper() or "DESCONTO" in txt.upper() or "R$" in txt):
+                        cards.append(sec)
+                print(f"📦 Estratégia 5 (texto com %/OFF/R$): {len(cards)} cards")
+
+            print(f"\n📦 Total de cards encontrados: {len(cards)}")
 
             for i, card in enumerate(cards):
                 try:
-                    # Tenta extrair a porcentagem de desconto
-                    badge_desconto = card.query_selector(
-                        'span[class*="badge"], '
-                        'span[class*="discount"], '
-                        'span[class*="savings"], '
-                        'span.a-text-bold'
-                    )
-                    if not badge_desconto:
-                        continue
+                    card_text = card.inner_text()
 
-                    texto_desconto = badge_desconto.inner_text()
-                    porcentagem = extrair_porcentagem(texto_desconto)
+                    # Extrai porcentagem de desconto do texto do card
+                    porcentagem = extrair_porcentagem(card_text)
 
                     if porcentagem <= DESCONTO_MINIMO:
                         continue
@@ -143,12 +182,18 @@ def buscar_ofertas():
                         'span[class*="title"], '
                         'a[class*="title"], '
                         'span.a-truncate-full, '
-                        'div[class*="Title"]'
+                        'div[class*="Title"], '
+                        'span.a-text-normal, '
+                        'a span'
                     )
-                    titulo = titulo_el.inner_text().strip() if titulo_el else f"Oferta #{i+1}"
+                    titulo = titulo_el.inner_text().strip() if titulo_el else ""
+                    if not titulo:
+                        # Tenta pegar a primeira linha significativa do texto
+                        linhas = [l.strip() for l in card_text.split("\n") if len(l.strip()) > 10]
+                        titulo = linhas[0] if linhas else f"Oferta #{i+1}"
 
                     # Tenta extrair o link
-                    link_el = card.query_selector("a[href]")
+                    link_el = card.query_selector('a[href*="/dp/"], a[href*="/deal/"], a[href]')
                     link = ""
                     deal_id = f"deal_{i}_{porcentagem}"
                     if link_el:
@@ -167,11 +212,14 @@ def buscar_ofertas():
 
                     # Tenta extrair preço
                     preco_el = card.query_selector(
-                        'span[class*="price"], '
                         'span.a-price span.a-offscreen, '
-                        'span.a-price-whole'
+                        'span.a-price-whole, '
+                        'span[class*="price"]'
                     )
-                    preco = preco_el.inner_text().strip() if preco_el else "Preço não disponível"
+                    preco = preco_el.inner_text().strip() if preco_el else ""
+                    if not preco:
+                        preco_match = re.search(r"R\$\s*[\d.,]+", card_text)
+                        preco = preco_match.group(0) if preco_match else "Preço não disponível"
 
                     # Tenta extrair imagem
                     img_el = card.query_selector("img[src]")

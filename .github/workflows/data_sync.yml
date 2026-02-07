@@ -37,7 +37,16 @@ jobs:
           PARTNER_CODE: ${{ secrets.PARTNER_CODE }}
         run: python analysis_module.py
 
-      - name: 🔄 Commit e Push automático
+      - name: � Salvar screenshot de debug
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshot
+          path: debug.png
+          retention-days: 3
+          if-no-files-found: ignore
+
+      - name: �🔄 Commit e Push automático
         run: |
           git config user.name "Retail Bot"
           git config user.email "bot@retail-analysis.local"
