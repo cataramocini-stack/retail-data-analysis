@@ -206,21 +206,14 @@ def execute_stochastic_sampling():
                         preco_match = re.search(r"R\$\s*[\d.,]+", card_text)
                         preco = preco_match.group(0) if preco_match else "N/A"
 
-                    # Extract old price (DE) from strikethrough or list price
+                    # PRIORIDADE 1: Extract list price from strikethrough (.a-price.a-text-price)
                     preco_antigo_el = card.query_selector(
-                        'span.a-price.a-text-price span.a-offscreen, '
-                        'span[data-a-color="base"] span.a-offscreen, '
-                        'span.a-strike-through, '
-                        'span[class*="listPrice"]'
+                        'span.a-price.a-text-price span.a-offscreen'
                     )
                     preco_antigo = preco_antigo_el.inner_text().strip() if preco_antigo_el else ""
-                    if not preco_antigo:
-                        # Try regex for "DE R$ X" pattern
-                        preco_antigo_match = re.search(r"DE\s*R\$\s*[\d.,]+", card_text, re.IGNORECASE)
-                        preco_antigo = preco_antigo_match.group(0) if preco_antigo_match else ""
                     
-                    # EXTREME sanitization: keep ONLY numbers and comma
-                    def sanitize_price_extreme(p):
+                    # Sanitization with decimal control
+                    def sanitize_price_controlled(p):
                         if not p or p == "N/A":
                             return p
                         # Remove EVERYTHING except numbers and comma
@@ -233,17 +226,18 @@ def execute_stochastic_sampling():
                         p_clean = re.sub(r",+", ",", p_clean)
                         return p_clean.strip() if p_clean.strip() else "N/A"
                     
-                    preco_sanitized = sanitize_price_extreme(preco)
-                    preco_antigo_sanitized = sanitize_price_extreme(preco_antigo)
+                    preco_sanitized = sanitize_price_controlled(preco)
+                    preco_antigo_sanitized = sanitize_price_controlled(preco_antigo)
                     
-                    # If no old price found, calculate reverse from discount
-                    if not preco_antigo_sanitized and preco_sanitized != "N/A" and porcentagem > 0:
+                    # PRIORIDADE 2: OBRIGATORY calculation if no old price OR if old price equals current
+                    if (not preco_antigo_sanitized or preco_antigo_sanitized == preco_sanitized) and preco_sanitized != "N/A" and porcentagem > 0:
                         try:
                             # Extract numeric value from current price
                             preco_num = float(preco_sanitized.replace(",", "."))
                             # Reverse calculate: old_price = current_price / (1 - discount/100)
                             preco_antigo_calc = preco_num / (1 - porcentagem / 100)
-                            preco_antigo_sanitized = f"{preco_antigo_calc:.2f}".replace(".", ",")
+                            # Round to 2 decimal places and format with comma
+                            preco_antigo_sanitized = f"{round(preco_antigo_calc, 2):.2f}".replace(".", ",")
                         except (ValueError, ZeroDivisionError):
                             preco_antigo_sanitized = ""
 
