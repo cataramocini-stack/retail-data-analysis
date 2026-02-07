@@ -307,7 +307,7 @@ def ingest_to_primary_endpoint(data_point):
 
     affiliated_uri = construct_affiliated_uri(data_point["link"], data_point["id"])
 
-    # EXACT message construction as specified
+    # ORDEM DO PROFESSOR XAVIER: Substituição total do método
     title = data_point['titulo']
     price_current = float(data_point["preco"].replace(",", ".")) if data_point["preco"] else 0
     price_old_raw = data_point.get("preco_antigo", "")
@@ -315,24 +315,24 @@ def ingest_to_primary_endpoint(data_point):
     discount = data_point['desconto']
     url = affiliated_uri
     
-    # 1. Limpeza radical de strings
-    clean_title = title.replace("Oferta:", "").strip()
-    # PROIBIDO: Remover "Menor preço em 365 dias"
+    # 1. Pegue o título real (limpando lixo da Amazon)
+    clean_title = title.split(',')[0].replace("Oferta para Membros Prime:", "").replace("Oferta:", "").strip()
+    # DELETE: "Menor preço em 365 dias"
     clean_title = re.sub(r"Menor preço em \d+ dias", "", clean_title, flags=re.IGNORECASE).strip()
-    if not clean_title:
-        clean_title = "Produto em Oferta"
     
+    # 2. Formatação Cirúrgica de Preços
     p_atual = "{:.2f}".format(price_current).replace('.', ',')
-    p_antigo = "{:.2f}".format(price_old).replace('.', ',') if price_old > 0 else ""
+    p_antigo = "{:.2f}".format(price_old).replace('.', ',')
     
-    # 2. Construção da LINHA ÚNICA (Sem cabeçalhos extras)
+    # 3. MONTAGEM EM LINHA ÚNICA (SEM CABEÇALHO, SEM REPETIR %)
+    # O NOME DO PRODUTO VEM LOGO APÓS "OFERTA -"
     if price_old > price_current:
-        line1 = f"📦 OFERTA - {clean_title} - DE R$ {p_antigo} por R$ {p_atual} ({discount}% OFF) 🔥"
+        msg_principal = f"📦 OFERTA - {clean_title} - DE R$ {p_antigo} por R$ {p_atual} ({discount}% OFF) 🔥"
     else:
-        line1 = f"📦 OFERTA - {clean_title} - R$ {p_atual} ({discount}% OFF) 🔥"
+        msg_principal = f"📦 OFERTA - {clean_title} - R$ {p_atual} ({discount}% OFF) 🔥"
     
-    # 3. Resultado Final
-    formatted_message = f"{line1}\n{url}"
+    # 4. OUTPUT FINAL (LINHA ÚNICA + LINK)
+    formatted_message = f"{msg_principal}\n{url}"
     
     mensagem = formatted_message
 
