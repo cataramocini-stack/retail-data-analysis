@@ -353,12 +353,12 @@ def ingest_to_primary_endpoint(data_point):
     p_atual = "{:.2f}".format(price_current).replace('.', ',')
     p_antigo = "{:.2f}".format(price_old).replace('.', ',') if price_old > 0 else ""
     
-    # 3. MONTAGEM EM LINHA ÚNICA - NOME DO PRODUTO OBRIGATÓRIO
-    # LINHA ÚNICA: 📦 OFERTA [NOME] - DE R$ X por R$ Y (Z% OFF) 🔥
+    # 3. MONTAGEM EM LINHA ÚNICA - NOME DO PRODUTO OBRIGATÓRIO + NEGRITO
+    # LINHA ÚNICA: 📦 **OFERTA - [NOME] - DE R$ X por R$ Y (Z% OFF) 🔥**
     if p_antigo and price_old > price_current:
-        msg_principal = f"📦 OFERTA {clean_title} - DE R$ {p_antigo} por R$ {p_atual} ({discount}% OFF) 🔥"
+        msg_principal = f"📦 **OFERTA - {clean_title} - DE R$ {p_antigo} por R$ {p_atual} ({discount}% OFF) 🔥**"
     else:
-        msg_principal = f"📦 OFERTA {clean_title} - R$ {p_atual} ({discount}% OFF) 🔥"
+        msg_principal = f"📦 **OFERTA - {clean_title} - R$ {p_atual} ({discount}% OFF) 🔥**"
     
     # 4. OUTPUT FINAL (LINHA ÚNICA + LINK)
     formatted_message = f"{msg_principal}\n{url}"
