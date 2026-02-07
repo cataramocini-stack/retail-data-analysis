@@ -98,28 +98,29 @@ def buscar_ofertas():
         page = context.new_page()
         stealth_sync(page)
 
-        try:
-            page.goto(AMAZON_OFERTAS_URL, wait_until="networkidle", timeout=90000)
-            print("📄 Página de ofertas carregada com sucesso!")
+        debug_path = os.path.join(os.getcwd(), "debug.png")
 
-            # Screenshot de debug para verificar o que o robô está vendo
-            debug_path = os.path.join(os.getcwd(), "debug.png")
-            page.screenshot(path=debug_path, full_page=True)
-            print(f"📸 Screenshot de debug salvo em: {debug_path}")
-            print(f"DEBUG: Screenshot gerado em {os.path.abspath('debug.png')}")
-            print(f"DEBUG: Arquivo existe? {os.path.exists(debug_path)}")
+        try:
+            page.goto(AMAZON_OFERTAS_URL, wait_until="domcontentloaded", timeout=60000)
+            print("📄 Página de ofertas carregada (domcontentloaded)!")
 
             # Aguarda conteúdo dinâmico renderizar
-            page.wait_for_timeout(8000)
+            page.wait_for_timeout(10000)
+
+            # Screenshot de debug APÓS espera
+            page.screenshot(path=debug_path, full_page=True)
+            print(f"📸 Screenshot de debug salvo em: {debug_path}")
+            print(f"DEBUG: Arquivo existe? {os.path.exists(debug_path)}")
 
             # Scroll para carregar mais ofertas
             for _ in range(5):
                 page.evaluate("window.scrollBy(0, window.innerHeight)")
                 page.wait_for_timeout(2000)
 
-            # Log do HTML para debug dos seletores
+            # Log do título da página
             page_title = page.title()
             print(f"📋 Título da página: {page_title}")
+            print(f"📋 URL atual: {page.url}")
 
             # Estratégia 1: Container principal de ofertas
             cards = page.query_selector_all(
@@ -253,6 +254,19 @@ def buscar_ofertas():
 
         except Exception as e:
             print(f"❌ Erro ao acessar a página de ofertas: {e}")
+            # Tenta capturar screenshot mesmo em caso de erro
+            try:
+                page.screenshot(path=debug_path, full_page=True)
+                print(f"📸 Screenshot de erro salvo em: {debug_path}")
+            except Exception:
+                print("⚠️ Não foi possível salvar screenshot de erro.")
+            # Dump HTML mesmo em caso de erro
+            try:
+                html_content = page.content()
+                print(f"\n🚨 HTML da página de erro (primeiros 2000 chars):")
+                print(html_content[:2000])
+            except Exception:
+                print("⚠️ Não foi possível capturar HTML.")
         finally:
             browser.close()
 
