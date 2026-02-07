@@ -219,20 +219,22 @@ def execute_stochastic_sampling():
                         preco_antigo_match = re.search(r"DE\s*R\$\s*[\d.,]+", card_text, re.IGNORECASE)
                         preco_antigo = preco_antigo_match.group(0) if preco_antigo_match else ""
                     
-                    # Sanitize prices: remove spaces between numbers and comma
-                    def sanitize_price(p):
+                    # EXTREME sanitization: keep ONLY numbers and comma
+                    def sanitize_price_extreme(p):
                         if not p or p == "N/A":
                             return p
-                        # Remove R$ prefix and spaces
-                        p_clean = re.sub(r"R\$\s*", "", p, flags=re.IGNORECASE)
-                        # Remove spaces between digits and comma/period
-                        p_clean = re.sub(r"\s+([.,])", r"\1", p_clean)
-                        # Remove other spaces
-                        p_clean = re.sub(r"\s+", "", p_clean)
-                        return p_clean.strip()
+                        # Remove EVERYTHING except numbers and comma
+                        p_clean = re.sub(r"[^0-9,]", "", p)
+                        # Remove multiple commas, keep only the first (decimal separator)
+                        parts = p_clean.split(",")
+                        if len(parts) > 2:
+                            p_clean = parts[0] + "," + "".join(parts[1:])
+                        # Ensure format: digits,optional comma,digits
+                        p_clean = re.sub(r",+", ",", p_clean)
+                        return p_clean.strip() if p_clean.strip() else "N/A"
                     
-                    preco_sanitized = sanitize_price(preco)
-                    preco_antigo_sanitized = sanitize_price(preco_antigo)
+                    preco_sanitized = sanitize_price_extreme(preco)
+                    preco_antigo_sanitized = sanitize_price_extreme(preco_antigo)
                     
                     # If no old price found, calculate reverse from discount
                     if not preco_antigo_sanitized and preco_sanitized != "N/A" and porcentagem > 0:
@@ -301,21 +303,15 @@ def ingest_to_primary_endpoint(data_point):
 
     affiliated_uri = construct_affiliated_uri(data_point["link"], data_point["id"])
 
-    # Build price display with old price if available and different
+    # Build price display with EXTREME sanitization and deduplication check
     preco_atual = data_point["preco"]
     preco_antigo = data_point.get("preco_antigo", "")
     
-    # Format message based on price availability
+    # Final format: single line, strict pattern
     if preco_antigo and preco_antigo != preco_atual and preco_antigo != "N/A":
-        mensagem = (
-            f"📦 OFERTA - {data_point['titulo'][:200]} - DE R$ {preco_antigo} por R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥\n"
-            f"{affiliated_uri}"
-        )
+        mensagem = f"📦 OFERTA - {data_point['titulo'][:200]} - DE R$ {preco_antigo} por R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥\n{affiliated_uri}"
     else:
-        mensagem = (
-            f"📦 OFERTA - {data_point['titulo'][:200]} - R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥\n"
-            f"{affiliated_uri}"
-        )
+        mensagem = f"📦 OFERTA - {data_point['titulo'][:200]} - R$ {preco_atual} ({data_point['desconto']}% OFF) 🔥\n{affiliated_uri}"
 
     payload = {"content": mensagem}
 

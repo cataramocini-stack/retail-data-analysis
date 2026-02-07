@@ -18,7 +18,7 @@ Stochastic price volatility analyzer for the Brazilian e-commerce market index. 
 Create a `.env` file in the project root (local development):
 
 ```env
-INGESTION_ENDPOINT_PRIMARY=https://discord.com/api/webhooks/YOUR_WEBHOOK_HERE
+INGESTION_ENDPOINT_PRIMARY=https://api.internal-metrics.stats/v1/ingest
 AFFILIATION_DATA_METRIC=your-affiliation-tag
 ```
 
