@@ -152,6 +152,27 @@ def execute_stochastic_sampling():
                 )
                 print(f"[EXTRACT] Strategy 4 (anchor deep links): {len(cards)} data points localized")
 
+            # Selector Strategy 5: Generic Amazon deal selectors (2024+)
+            if len(cards) == 0:
+                cards = page.query_selector_all(
+                    'div[data-component-type="s-search-result"], '
+                    'div.s-search-result, '
+                    'div.s-result-item, '
+                    'div[data-asin], '
+                    'div.a-spacing-small'
+                )
+                print(f"[EXTRACT] Strategy 5 (generic 2024+): {len(cards)} data points localized")
+
+            # Selector Strategy 6: Any element with discount text
+            if len(cards) == 0:
+                cards = page.query_selector_all(
+                    'div:has-text("%"), '
+                    'span:has-text("%"), '
+                    'div:has-text("OFF"), '
+                    'span:has-text("OFF")'
+                )
+                print(f"[EXTRACT] Strategy 6 (discount text): {len(cards)} data points localized")
+
             print(f"[EXTRACT] Total data points localized: {len(cards)}")
 
             for i, card in enumerate(cards):
