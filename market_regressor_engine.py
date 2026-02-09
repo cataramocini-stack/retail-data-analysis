@@ -41,7 +41,7 @@ def ingest_to_primary_endpoint(data_point):
         connector = "&" if "?" in url_afiliado else "?"
         url_afiliado = f"{url_afiliado}{connector}tag={AFFILIATION_DATA_METRIC}"
 
-    # FORMATO ATUALIZADO: 📦 **OFERTA - Nome do Produto - DE R$X por R$Y (Z% OFF) 🔥**
+    # FORMATO: 📦 **OFERTA - Nome - DE R$X por R$Y (Z% OFF) 🔥**
     frase = (
         f"📦 **OFERTA - {data_point['titulo']} - "
         f"DE {data_point['preco_de']} por {data_point['preco_por']} "
@@ -68,19 +68,24 @@ def run_stochastic_polling():
         print(f"[POLLING] Capturando em: {SAMPLING_SOURCE_URI}")
         
         try:
+            # Espera carregar e dá um tempo extra para o JS da Amazon
             page.goto(SAMPLING_SOURCE_URI, wait_until="networkidle", timeout=60000)
-            page.wait_for_timeout(5000)
-            for _ in range(4):
-                page.mouse.wheel(0, 1000)
+            page.wait_for_timeout(7000) 
+            
+            # Scroll para ativar o carregamento das ofertas (Lazy Load)
+            for _ in range(5):
+                page.mouse.wheel(0, 800)
                 page.wait_for_timeout(1000)
-        except: pass
+        except: 
+            print("[WARN] Timeout na página, tentando processar o que carregou...")
 
-        # Seleciona os cards de oferta
+        # Busca containers de produtos
         cards = page.query_selector_all("div:has(a[href*='/dp/'])")
         seen_ids = set()
 
         for card in cards:
             try:
+                # 1. Busca Link e ASIN
                 link_el = card.query_selector("a[href*='/dp/']")
                 if not link_el: continue
                 
@@ -92,42 +97,44 @@ def run_stochastic_polling():
                 if asin in seen_ids: continue
                 seen_ids.add(asin)
 
-                texto_total = card.inner_text()
-                linhas = [l.strip() for l in texto_total.split('\n') if len(l.strip()) > 1]
-
-                # --- LÓGICA DE TÍTULO ROBUSTA ---
-                # Se o link_el.inner_text vier com "45% OFF", nós ignoramos e buscamos o nome real
-                titulo_candidato = link_el.inner_text().strip()
+                # 2. Captura Texto e identifica Nome do Produto
+                texto_card = card.inner_text()
+                linhas = [l.strip() for l in texto_card.split('\n') if len(l.strip()) > 3]
                 
-                if not titulo_candidato or "%" in titulo_candidato or "R$" in titulo_candidato:
-                    # Se o título do link for inválido, pegamos a linha mais longa do card (geralmente é o nome)
-                    # Filtramos linhas que contém preços ou porcentagens
-                    candidatos = [l for l in linhas if "%" not in l and "R$" not in l and "Oferta" not in l]
-                    titulo = candidatos[0] if candidatos else "Produto em Oferta"
+                # Filtra linhas para achar o título (remove o que tem R$ ou %)
+                candidatos_titulo = [l for l in linhas if "R$" not in l and "%" not in l and "Oferta" not in l]
+                
+                # Prioridade: Texto do link (se for longo) > Primeira linha candidata > "Produto Amazon"
+                titulo_link = link_el.inner_text().strip()
+                if titulo_link and len(titulo_link) > 15 and "%" not in titulo_link:
+                    titulo = titulo_link
+                elif candidatos_titulo:
+                    titulo = candidatos_titulo[0]
                 else:
-                    titulo = titulo_candidato
+                    titulo = "Produto em Oferta Especial"
 
-                # --- PREÇOS E DESCONTO ---
-                precos_encontrados = re.findall(r'R\$\s?\d+[.,]\d{2}', texto_total)
+                # 3. Mineração de Preços
+                precos_encontrados = re.findall(r'R\$\s?\d+[.,]\d{2}', texto_card)
                 if not precos_encontrados: continue
 
-                precos_numericos = []
-                for p_str in precos_encontrados:
-                    n = float(p_str.replace('R$', '').replace('.', '').replace(',', '.').strip())
-                    precos_numericos.append((n, p_str))
+                precos_num = []
+                for ps in precos_encontrados:
+                    n = float(ps.replace('R$', '').replace('.', '').replace(',', '.').strip())
+                    precos_num.append((n, ps))
                 
-                precos_numericos.sort()
-                preco_por = precos_numericos[0][1]
-                preco_de = precos_numericos[-1][1] if len(precos_numericos) > 1 else "---"
+                precos_num.sort()
+                preco_por = precos_num[0][1]
+                preco_de = precos_num[-1][1] if len(precos_num) > 1 else "---"
 
-                desc_match = re.search(r'(\d+)%', texto_total)
+                # 4. Desconto
+                desc_match = re.search(r'(\d+)%', texto_card)
                 desconto = int(desc_match.group(1)) if desc_match else 0
                 
                 if desconto < VARIANCE_THRESHOLD: continue
 
                 data_points.append({
                     "id": asin,
-                    "titulo": titulo[:80].strip(), # Corta para não ficar gigante
+                    "titulo": titulo[:85].strip(), # Nome agora garantido
                     "url": f"https://www.amazon.com.br/dp/{asin}",
                     "preco_de": preco_de,
                     "preco_por": preco_por,
@@ -140,10 +147,12 @@ def run_stochastic_polling():
 
 def main():
     print("=" * 60)
-    print("[START] Market Regressor — Final Style Mode")
+    print("[START] Market Regressor — Style & Name Fixed")
     print("=" * 60)
     
     data_points = run_stochastic_polling()
+    print(f"[INFO] {len(data_points)} ofertas processadas.")
+
     if not data_points: return
 
     data_points.sort(key=lambda x: x['desconto'], reverse=True)
@@ -151,10 +160,11 @@ def main():
     
     for item in data_points:
         if item["id"] not in processed_hashes:
+            print(f"[MATCH] Enviando: {item['titulo']}")
             if ingest_to_primary_endpoint(item):
                 persist_data_hash(item["id"])
-                print(f"[SUCCESS] Postado: {item['titulo']}")
-                break 
+                print("[SUCCESS] Postado!")
+                return 
 
 if __name__ == "__main__":
     main()
