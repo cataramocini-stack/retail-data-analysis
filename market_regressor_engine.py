@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
-import os
-import re
-import requests
+import os, re, requests
 from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
 
 load_dotenv()
-
 DISCORD_WEBHOOK = os.getenv("INGESTION_ENDPOINT_PRIMARY")
 AFFILIATE_TAG = os.getenv("AFFILIATION_DATA_METRIC", "scriptoriu01a-20")
 METADATA_STORE = "processed_metadata.db"
@@ -22,88 +19,70 @@ def save_id(asin):
 
 def run():
     print("=" * 60)
-    print("[START] Market Regressor — Mira Coringa & Título Limpo")
+    print("[START] Market Regressor — Versão Final Sem Cortes")
     print("=" * 60)
-    
     processed_ids = load_processed_ids()
     round_ids = set()
     
     with sync_playwright() as p:
-        # Modo 'Slow Mo' para parecer mais humano e evitar o 'Cards: 0'
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            viewport={'width': 1920, 'height': 1080}
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         )
         page = context.new_page()
-        
         try:
             print("[POLLING] Acessando Amazon...")
             page.goto("https://www.amazon.com.br/ofertas", wait_until="networkidle", timeout=90000)
+            page.mouse.wheel(0, 1000)
+            page.wait_for_timeout(5000)
             
-            # Scroll progressivo para forçar a renderização das DIVs
-            for _ in range(3):
-                page.mouse.wheel(0, 1000)
-                page.wait_for_timeout(2000)
-            
-            # MIRA CORINGA: Pega qualquer bloco que tenha cara de produto
-            cards = page.query_selector_all("div[data-testid*='grid-desktop-item'], div[class*='DealGridItem'], .a-section.list-item")
-            
-            # Se ainda der 0, tentamos uma busca desesperada por qualquer DIV com link de produto
-            if not cards:
-                cards = page.query_selector_all("div:has(a[href*='/dp/'])")
-                
+            # Busca ampliada por qualquer item de oferta
+            cards = page.query_selector_all("div:has(a[href*='/dp/'])")
             print(f"[INFO] Elementos detectados: {len(cards)}")
             
             found_count = 0
             for card in cards:
                 try:
-                    # 1. PEGAR ASIN (ID)
+                    # 1. ASIN e Link
                     link_el = card.query_selector("a[href*='/dp/']")
                     if not link_el: continue
-                    url_raw = link_el.get_attribute("href")
-                    asin_match = re.search(r'/([A-Z0-9]{10})', url_raw)
-                    if not asin_match: continue
-                    asin = asin_match.group(1)
-                    
+                    asin = re.search(r'/([A-Z0-9]{10})', link_el.get_attribute("href")).group(1)
                     if asin in processed_ids or asin in round_ids: continue
 
-                    # 2. PEGAR DESCONTO (Símbolo %)
-                    texto_card = card.inner_text()
-                    desc_match = re.search(r'(\d+)%', texto_card)
-                    if not desc_match: continue
-                    desconto = int(desc_match.group(1))
-                    if desconto < 15: continue
+                    # 2. Desconto e Texto
+                    txt = card.inner_text()
+                    d_match = re.search(r'(\d+)%', txt)
+                    if not d_match or int(d_match.group(1)) < 15: continue
+                    desconto = d_match.group(1)
 
-                    # 3. PEGAR TÍTULO (Prioridade total para o ALT da imagem - Evita 'Menor Preço')
-                    img_el = card.query_selector("img")
-                    titulo = img_el.get_attribute("alt") if img_el else ""
-                    
-                    if not titulo or len(titulo) < 15:
-                        # Backup: tenta o link
-                        title_el = card.query_selector(".a-truncate-cut, h3")
-                        titulo = title_el.inner_text().strip() if title_el else "Produto em Oferta"
+                    # 3. Título (Pega o ALT da imagem para ser o nome real)
+                    img = card.query_selector("img")
+                    titulo = img.get_attribute("alt") if img else "Produto"
+                    if len(titulo) < 10: continue
 
-                    # 4. PREÇOS (Limpeza completa de R$)
-                    precos_raw = re.findall(r'R\$\s?[\d.,]+', texto_card)
-                    limpos = []
-                    for pr in precos_raw:
-                        val = float(pr.replace('R$', '').replace('.', '').replace(',', '.').strip())
-                        if val not in [v[0] for v in limpos]: limpos.append((val, pr))
+                    # 4. Preços (Busca R$)
+                    precos = re.findall(r'R\$\s?[\d.,]+', txt)
+                    vals = []
+                    for p_raw in precos:
+                        v = float(p_raw.replace('R$', '').replace('.', '').replace(',', '.').strip())
+                        if v not in [x[0] for x in vals]: vals.append((v, p_raw))
                     
-                    limpos.sort() # Menor preço (Por) primeiro
-                    if not limpos: continue
-                    
-                    preco_por = limpos[0][1]
-                    preco_de = limpos[-1][1] if len(limpos) > 1 else "---"
+                    vals.sort()
+                    if not vals: continue
+                    p_por = vals[0][1]
+                    p_de = vals[-1][1] if len(vals) > 1 else "---"
 
-                    # FORMATAÇÃO FINAL ESTILO PROFISSIONAL
-                    frase = (
-                        f"📦 **OFERTA - {titulo[:90]} - "
-                        f"DE {preco_de} por {preco_por} "
-                        f"({desconto}% OFF) 🔥**"
-                    )
+                    # POSTAGEM FORMATADA
+                    msg = (f"📦 **OFERTA - {titulo[:90]} - "
+                           f"DE {p_de} por {p_por} ({desconto}% OFF) 🔥**\n"
+                           f"https://www.amazon.com.br/dp/{asin}?tag={AFFILIATE_TAG}")
                     
-                    payload = {"content": f"{frase}\nhttps://www.amazon.com.br/dp/{asin}?tag={AFFILIATE_TAG}"}
-                    
-                    response = requests.post(DISCORD_WEBHOOK, json=payload, timeout
+                    res = requests.post(DISCORD_WEBHOOK, json={"content": msg}, timeout=15)
+                    if res.status_code < 400:
+                        save_id(asin)
+                        round_ids.add(asin)
+                        print(f"[SUCCESS] {titulo[:30]}")
+                        found_count += 1
+                        if found_count >= 5: break
+                except: continue
+        except Exception as e:
