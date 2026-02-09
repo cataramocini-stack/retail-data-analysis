@@ -8,7 +8,19 @@ sourced from publicly available e-commerce indices (BR market segment).
 import os
 import re
 import subprocess
+import sys
 import requests
+
+# --- [BOOTSTRAP] SOLUÇÃO PARA O ERRO DE PKG_RESOURCES ---
+# Esta secção força a instalação do setuptools se o módulo pkg_resources não for encontrado
+try:
+    import pkg_resources
+except ImportError:
+    print("[BOOTSTRAP] Módulo pkg_resources ausente. A instalar dependências legadas...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "setuptools<70.0.0"])
+    import pkg_resources
+# -------------------------------------------------------
+
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 from playwright_stealth import stealth_sync
@@ -29,7 +41,6 @@ SAMPLING_SOURCE_URI = "https://www.amazon.com.br/ofertas"
 # Minimum variance threshold for data relevance (percentage)
 VARIANCE_THRESHOLD = 20
 
-
 def load_processed_hashes():
     """Deserializes previously ingested data hashes from persistent store."""
     if not os.path.exists(METADATA_STORE):
@@ -37,435 +48,141 @@ def load_processed_hashes():
     with open(METADATA_STORE, "r", encoding="utf-8") as f:
         return set(line.strip() for line in f if line.strip())
 
-
 def persist_data_hash(data_hash):
     """Serializes a new data hash to the persistent metadata store."""
     with open(METADATA_STORE, "a", encoding="utf-8") as f:
         f.write(f"{data_hash}\n")
-    print(f"[STORE] Data hash committed to metadata store: {data_hash}")
 
+def ingest_to_primary_endpoint(data_point):
+    """Transmits normalized data packet to the configured ingestion endpoint."""
+    if not INGESTION_ENDPOINT_PRIMARY:
+        print("[ERROR] Primary ingestion endpoint not configured.")
+        return False
 
-def synchronize_version_control():
-    """Performs automated VCS synchronization of the metadata store."""
+    # Injeta a métrica de afiliação na URL final
+    url_afiliado = data_point['url']
+    if AFFILIATION_DATA_METRIC:
+        connector = "&" if "?" in url_afiliado else "?"
+        url_afiliado = f"{url_afiliado}{connector}tag={AFFILIATION_DATA_METRIC}"
+
+    payload = {
+        "embeds": [{
+            "title": f"🔥 {data_point['titulo'][:250]}",
+            "url": url_afiliado,
+            "color": 0xFF9900,
+            "fields": [
+                {"name": "Preço Original", "value": f"~~{data_point['preco_antigo']}~~", "inline": True},
+                {"name": "Preço Atual", "value": f"**{data_point['preco']}**", "inline": True},
+                {"name": "Desconto", "value": f"**{data_point['desconto']}%**", "inline": True}
+            ],
+            "image": {"url": data_point['imagem']},
+            "footer": {"text": "Market Regressor — Análise de Volatilidade de Preços"}
+        }]
+    }
+
     try:
-        repo_dir = os.path.dirname(os.path.abspath(__file__))
-        subprocess.run(["git", "config", "user.name", "Market Regressor Bot"], cwd=repo_dir, check=True)
-        subprocess.run(["git", "config", "user.email", "bot@market-regressor.local"], cwd=repo_dir, check=True)
-        subprocess.run(["git", "add", "processed_metadata.db"], cwd=repo_dir, check=True)
-        resultado = subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
-            cwd=repo_dir,
-            capture_output=True,
-        )
-        if resultado.returncode != 0:
-            subprocess.run(
-                ["git", "commit", "-m", "sync: update processed_metadata.db with latest regression output"],
-                cwd=repo_dir,
-                check=True,
-            )
-            subprocess.run(["git", "push"], cwd=repo_dir, check=True)
-            print("[VCS] Metadata store synchronized to remote repository.")
-        else:
-            print("[VCS] No delta detected in metadata store. Skipping synchronization.")
-    except subprocess.CalledProcessError as e:
-        print(f"[VCS_ERROR] Version control synchronization failed: {e}")
+        response = requests.post(INGESTION_ENDPOINT_PRIMARY, json=payload, timeout=15)
+        return response.status_code < 400
+    except Exception as e:
+        print(f"[ERROR] Ingestion failed: {e}")
+        return False
 
-
-def extract_variance_coefficient(text):
-    """Extracts numerical variance coefficient from raw text data."""
-    match = re.search(r"(\d+)\s*%", text)
-    if match:
-        return int(match.group(1))
-    return 0
-
-
-def execute_stochastic_sampling():
-    """Initiates headless chromium session for stochastic price data collection."""
-    print("[SAMPLING] Initializing stochastic price polling on BR market index...")
+def run_stochastic_polling():
+    """Executes the main headless browser sequence for data collection."""
     data_points = []
-
+    
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            locale="pt-BR",
-            viewport={"width": 1920, "height": 1080},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
         )
         page = context.new_page()
-        stealth_sync(page)
+        stealth_sync(page) # Aplica o disfarce de automação
 
-        debug_path = os.path.join(os.getcwd(), "debug.png")
+        print(f"[POLLING] Accessing {SAMPLING_SOURCE_URI}...")
+        page.goto(SAMPLING_SOURCE_URI, wait_until="networkidle", timeout=60000)
+        
+        # Scroll para carregar elementos dinâmicos
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight/2)")
+        page.wait_for_timeout(3000)
 
-        try:
-            page.goto(SAMPLING_SOURCE_URI, wait_until="domcontentloaded", timeout=60000)
-            print("[SAMPLING] Source index loaded. DOM content rendered.")
-
-            # Temporal buffer for asynchronous DOM hydration
-            page.wait_for_timeout(10000)
-
-            # Capture viewport state for diagnostic analysis
-            page.screenshot(path=debug_path, full_page=True)
-            print("[DIAG] Viewport snapshot captured for post-hoc analysis.")
-
-            # Viewport traversal to trigger lazy-loaded data nodes
-            for _ in range(5):
-                page.evaluate("window.scrollBy(0, window.innerHeight)")
-                page.wait_for_timeout(2000)
-
-            # Selector Strategy 1 (primary): Classical DOM node extraction
-            cards = page.query_selector_all(
-                '.shoveler-cell, '
-                '.a-list-item, '
-                'div[data-deal-id], '
-                'div[id*="deal"], '
-                'li[class*="deal"]'
-            )
-            print(f"[EXTRACT] Strategy 1 (classical nodes): {len(cards)} data points localized")
-
-            # Selector Strategy 2: TestID-annotated DOM fragments
-            if len(cards) == 0:
-                cards = page.query_selector_all(
-                    '[data-testid="grid-deals-container"] > div, '
-                    '[data-testid="deal-card"]'
-                )
-                print(f"[EXTRACT] Strategy 2 (testid fragments): {len(cards)} data points localized")
-
-            # Selector Strategy 3: Class-based polymorphic selectors
-            if len(cards) == 0:
-                cards = page.query_selector_all(
-                    'div[class*="DealCard"], '
-                    'div[class*="deal-card"], '
-                    'div[class*="dealCard"]'
-                )
-                print(f"[EXTRACT] Strategy 3 (polymorphic classes): {len(cards)} data points localized")
-
-            # Selector Strategy 4: Anchor-based deep link extraction
-            if len(cards) == 0:
-                cards = page.query_selector_all(
-                    'div.a-section a[href*="/dp/"], '
-                    'div.a-section a[href*="/deal/"], '
-                    'div.a-cardui'
-                )
-                print(f"[EXTRACT] Strategy 4 (anchor deep links): {len(cards)} data points localized")
-
-            # Selector Strategy 5: Generic Amazon deal selectors (2024+)
-            if len(cards) == 0:
-                cards = page.query_selector_all(
-                    'div[data-component-type="s-search-result"], '
-                    'div.s-search-result, '
-                    'div.s-result-item, '
-                    'div[data-asin], '
-                    'div.a-spacing-small'
-                )
-                print(f"[EXTRACT] Strategy 5 (generic 2024+): {len(cards)} data points localized")
-
-            # Selector Strategy 6: Any element with discount text
-            if len(cards) == 0:
-                cards = page.query_selector_all(
-                    'div:has-text("%"), '
-                    'span:has-text("%"), '
-                    'div:has-text("OFF"), '
-                    'span:has-text("OFF")'
-                )
-                print(f"[EXTRACT] Strategy 6 (discount text): {len(cards)} data points localized")
-
-            print(f"[EXTRACT] Total data points localized: {len(cards)}")
-
-            for i, card in enumerate(cards):
-                try:
-                    card_text = card.inner_text()
-
-                    # Compute variance coefficient from raw text
-                    porcentagem = extract_variance_coefficient(card_text)
-
-                    if porcentagem <= VARIANCE_THRESHOLD:
-                        continue
-
-                    # Extract product label from DOM subtree
-                    # Tenta múltiplos seletores para garantir o nome real do produto
-                    titulo = ""
-                    
-                    # Opção 1: Alt text da imagem (geralmente tem o nome limpo)
-                    img_el = card.query_selector("img[src]")
-                    if img_el:
-                        titulo = img_el.get_attribute("alt") or ""
-                    
-                    # Opção 2: Seletores de título específicos
-                    if not titulo or len(titulo) < 5:
-                        titulo_el = card.query_selector(
-                            'h2 a span, '
-                            'h2 span, '
-                            '[data-cy="deal-product-title"], '
-                            'span.a-truncate-full, '
-                            'div.a-section a[href*="/dp/"]'
-                        )
-                        if titulo_el:
-                            titulo = titulo_el.inner_text().strip()
-                    
-                    # Opção 3: Extrair do texto do card, filtrando linhas relevantes
-                    if not titulo or len(titulo) < 5 or titulo.lower() in ["oferta", "deals"]:
-                        linhas = [l.strip() for l in card_text.split("\n") if len(l.strip()) > 10]
-                        # Filtrar linhas que não são preços, descontos ou marketing
-                        for linha in linhas:
-                            linha_lower = linha.lower()
-                            if ("oferta" not in linha_lower or len(linha) > 20) and \
-                               "r$" not in linha_lower and \
-                               "%" not in linha and \
-                               "menor preço" not in linha_lower:
-                                titulo = linha
-                                break
-                    
-                    # Fallback final
-                    if not titulo or len(titulo) < 3 or titulo.lower() == "oferta":
-                        titulo = f"Produto #{i+1}"
-
-                    # Extract reference URI from anchor elements
-                    link_el = card.query_selector('a[href*="/dp/"], a[href*="/deal/"], a[href]')
-                    link = ""
-                    data_hash = f"dp_{i}_{porcentagem}"
-                    if link_el:
-                        href = link_el.get_attribute("href")
-                        if href:
-                            if href.startswith("/"):
-                                href = f"https://www.amazon.com.br{href}"
-                            link = href
-                            asin_match = re.search(r"/dp/([A-Z0-9]{10})", href)
-                            deal_match = re.search(r"dealid=([^&]+)", href, re.IGNORECASE)
-                            if asin_match:
-                                data_hash = asin_match.group(1)
-                            elif deal_match:
-                                data_hash = deal_match.group(1)
-
-                    # Extract current price tensor from DOM
-                    preco_el = card.query_selector(
-                        'span.a-price span.a-offscreen, '
-                        'span.a-price-whole, '
-                        'span[class*="price"]'
-                    )
-                    preco = preco_el.inner_text().strip() if preco_el else ""
-                    if not preco:
-                        preco_match = re.search(r"R\$\s*[\d.,]+", card_text)
-                        preco = preco_match.group(0) if preco_match else "N/A"
-
-                    # PRIORIDADE 1: Extract list price from strikethrough (.a-price.a-text-price)
-                    preco_antigo_el = card.query_selector(
-                        'span.a-price.a-text-price span.a-offscreen'
-                    )
-                    preco_antigo = preco_antigo_el.inner_text().strip() if preco_antigo_el else ""
-                    
-                    # DEFINITIVE sanitization: remove ALL text artifacts + strict 2 decimal places
-                    def sanitize_price_definitive(p):
-                        if not p or p == "N/A":
-                            return p
-                        # Remove text artifacts like 'PreçodaOferta' and other glued text
-                        p_clean = re.sub(r"[A-Za-z]+", "", p)
-                        # Remove EVERYTHING except numbers and comma
-                        p_clean = re.sub(r"[^0-9,]", "", p_clean)
-                        # Remove multiple commas, keep only the first (decimal separator)
-                        parts = p_clean.split(",")
-                        if len(parts) > 2:
-                            p_clean = parts[0] + "," + "".join(parts[1:])
-                        # Ensure format: digits,optional comma,digits
-                        p_clean = re.sub(r",+", ",", p_clean)
-                        return p_clean.strip() if p_clean.strip() else "N/A"
-                    
-                    preco_sanitized = sanitize_price_definitive(preco)
-                    preco_antigo_sanitized = sanitize_price_definitive(preco_antigo)
-                    
-                    # Apply strict 2 decimal formatting to current price
-                    if preco_sanitized != "N/A":
-                        try:
-                            preco_num = float(preco_sanitized.replace(",", "."))
-                            preco_sanitized = f"{round(preco_num, 2):.2f}".replace(".", ",")
-                        except ValueError:
-                            pass
-                    
-                    # PRIORIDADE 2: OBRIGATORY calculation if no old price OR if old price equals current
-                    if (not preco_antigo_sanitized or preco_antigo_sanitized == preco_sanitized) and preco_sanitized != "N/A" and porcentagem > 0:
-                        try:
-                            # Extract numeric value from current price
-                            preco_num = float(preco_sanitized.replace(",", "."))
-                            # Reverse calculate: old_price = current_price / (1 - discount/100)
-                            preco_antigo_calc = preco_num / (1 - porcentagem / 100)
-                            # Round to 2 decimal places and format with comma
-                            preco_antigo_sanitized = f"{round(preco_antigo_calc, 2):.2f}".replace(".", ",")
-                        except (ValueError, ZeroDivisionError):
-                            preco_antigo_sanitized = ""
-
-                    # Extract thumbnail URI
-                    img_el = card.query_selector("img[src]")
-                    img_url = img_el.get_attribute("src") if img_el else ""
-
-                    data_points.append({
-                        "id": data_hash,
-                        "titulo": titulo,
-                        "desconto": porcentagem,
-                        "preco": preco_sanitized,
-                        "preco_antigo": preco_antigo_sanitized,
-                        "link": link,
-                        "imagem": img_url,
-                    })
-
-                    print(f"  [DATA] {titulo[:60]}... | variance={porcentagem}%")
-
-                except Exception as e:
-                    print(f"  [WARN] Failed to parse data point #{i}: {e}")
-                    continue
-
-        except Exception as e:
-            print(f"[ERROR] Stochastic sampling failed: {e}")
+        # Seletores de extração (podem precisar de ajuste se a Amazon mudar o layout)
+        items = page.query_selector_all("[data-testid='grid-deals-container'] [data-testid='deal-card']")
+        
+        for item in items:
             try:
-                page.screenshot(path=debug_path, full_page=True)
-                print("[DIAG] Error-state viewport snapshot captured.")
-            except Exception:
-                pass
-        finally:
-            browser.close()
+                titulo_el = item.query_selector(".//div[contains(@class, 'DealTitle')]")
+                link_el = item.query_selector("a")
+                precos = item.query_selector_all(".//span[contains(@class, 'a-price')]")
+                img_el = item.query_selector("img")
 
-    print(f"[RESULT] Data points exceeding {VARIANCE_THRESHOLD}% variance threshold: {len(data_points)}")
+                if titulo_el and link_el and len(precos) >= 1:
+                    titulo = titulo_el.inner_text().strip()
+                    url = "https://www.amazon.com.br" + link_el.get_attribute("href").split("?")[0]
+                    
+                    # Extrai ID do produto (ASIN) para o banco de dados
+                    asin_match = re.search(r'/(?:dp|gp/product)/([A-Z0-9]{10})', url)
+                    item_id = asin_match.group(1) if asin_match else url
+                    
+                    preco_atual = precos[0].inner_text().replace('\n', ',').strip()
+                    preco_antigo = ""
+                    desconto = 0
+
+                    # Tenta calcular a variância (desconto)
+                    desconto_el = item.query_selector(".//span[contains(@class, 'badge-percent-off')]")
+                    if desconto_el:
+                        desconto_raw = re.findall(r'\d+', desconto_el.inner_text())
+                        desconto = int(desconto_raw[0]) if desconto_raw else 0
+
+                    if desconto >= VARIANCE_THRESHOLD:
+                        data_points.append({
+                            "id": item_id,
+                            "titulo": titulo,
+                            "url": url,
+                            "preco": preco_atual,
+                            "preco_antigo": preco_antigo,
+                            "desconto": desconto,
+                            "imagem": img_el.get_attribute("src") if img_el else ""
+                        })
+            except Exception as e:
+                continue
+
+        browser.close()
     return data_points
 
-
-def construct_affiliated_uri(link, data_hash):
-    """Constructs a normalized URI with affiliation metric parameter."""
-    if not link:
-        return link
-    asin_match = re.search(r"/dp/([A-Z0-9]{10})", link)
-    if asin_match:
-        clean_uri = f"https://www.amazon.com.br/dp/{asin_match.group(1)}"
-    else:
-        clean_uri = link.split("?")[0].split("ref=")[0].rstrip("/")
-    if AFFILIATION_DATA_METRIC:
-        clean_uri = f"{clean_uri}?tag={AFFILIATION_DATA_METRIC}"
-    return clean_uri
-
-
-def ingest_to_primary_endpoint(data_point):
-    """Transmits processed data packet to the primary ingestion endpoint."""
-    if not INGESTION_ENDPOINT_PRIMARY:
-        print("[ERROR] INGESTION_ENDPOINT_PRIMARY not configured. Aborting transmission.")
-        return False
-
-    affiliated_uri = construct_affiliated_uri(data_point["link"], data_point["id"])
-
-    # ORDEM DO PROFESSOR XAVIER: Substituição total do método
-    title = data_point['titulo']
-    price_current = float(data_point["preco"].replace(",", ".")) if data_point["preco"] else 0
-    price_old_raw = data_point.get("preco_antigo", "")
-    price_old = float(price_old_raw.replace(",", ".")) if price_old_raw and price_old_raw != "N/A" else 0
-    discount = data_point['desconto']
-    url = affiliated_uri
-    
-    # 1. Limpeza do título - REMOVIDO split que cortava o nome
-    clean_title = title.replace("Oferta para Membros Prime:", "").replace("Oferta:", "").replace("Oferta -", "").strip()
-    # DELETE: "Menor preço em 365 dias"
-    clean_title = re.sub(r"Menor preço em \d+ dias", "", clean_title, flags=re.IGNORECASE).strip()
-    # DELETE: porcentagem no início do título
-    clean_title = re.sub(r"^\d+%\s*off\s*[-:]?\s*", "", clean_title, flags=re.IGNORECASE).strip()
-    # Fallback
-    if not clean_title or len(clean_title) < 3:
-        clean_title = "Produto em Oferta"
-    
-    # 2. Formatação Cirúrgica de Preços
-    p_atual = "{:.2f}".format(price_current).replace('.', ',')
-    p_antigo = "{:.2f}".format(price_old).replace('.', ',') if price_old > 0 else ""
-    
-    # 3. MONTAGEM EM LINHA ÚNICA - NOME DO PRODUTO OBRIGATÓRIO + NEGRITO
-    # LINHA ÚNICA: 📦 **OFERTA - [NOME] - DE R$ X por R$ Y (Z% OFF) 🔥**
-    if p_antigo and price_old > price_current:
-        msg_principal = f"📦 **OFERTA - {clean_title} - DE R$ {p_antigo} por R$ {p_atual} ({discount}% OFF) 🔥**"
-    else:
-        msg_principal = f"📦 **OFERTA - {clean_title} - R$ {p_atual} ({discount}% OFF) 🔥**"
-    
-    # 4. OUTPUT FINAL (LINHA ÚNICA + LINK)
-    formatted_message = f"{msg_principal}\n{url}"
-    
-    mensagem = formatted_message
-
-    payload = {"content": mensagem}
-
-    try:
-        response = requests.post(
-            INGESTION_ENDPOINT_PRIMARY,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=15,
-        )
-        if response.status_code == 204:
-            print("[INGEST] Data packet successfully transmitted to primary endpoint.")
-            return True
-        else:
-            print(f"[INGEST_ERROR] Endpoint returned HTTP {response.status_code}: {response.text}")
-            return False
-    except requests.RequestException as e:
-        print(f"[INGEST_ERROR] Connection to primary endpoint failed: {e}")
-        return False
-
-
 def main():
-    """Main execution pipeline for the Market Regressor Engine."""
     print("=" * 60)
-    print("[INIT] Market Regressor Engine — Stochastic Analysis Pipeline v2.1")
+    print("[START] Market Regressor Engine Pipeline")
     print("=" * 60)
 
-    # Validate runtime configuration
-    if not INGESTION_ENDPOINT_PRIMARY:
-        print("[FATAL] INGESTION_ENDPOINT_PRIMARY not defined. Pipeline aborted.")
-        return
-    if not AFFILIATION_DATA_METRIC:
-        print("[WARN] AFFILIATION_DATA_METRIC not defined. URIs will lack affiliation parameter.")
-
-    # Execute stochastic price sampling
-    data_points = execute_stochastic_sampling()
-
+    data_points = run_stochastic_polling()
+    
     if not data_points:
-        print("[RESULT] No data points exceeded variance threshold. Pipeline complete.")
+        print("[INFO] No data points meeting variance threshold were identified.")
         return
 
-    # Sort by variance coefficient (descending) and select optimal data point
-    data_points.sort(key=lambda x: x["desconto"], reverse=True)
-    optimal_point = data_points[0]
-
-    print(f"\n[OPTIMAL] Highest variance data point identified:")
-    print(f"   Label: {optimal_point['titulo'][:80]}")
-    print(f"   Variance: {optimal_point['desconto']}%")
-    print(f"   Price tensor: {optimal_point['preco']}")
-
-    # Check against processed metadata store for deduplication
-    # Ensures we never post the same deal twice, cycles through available deals
+    # Ordena por maior variância (desconto)
+    data_points.sort(key=lambda x: x['desconto'], reverse=True)
+    
     processed_hashes = load_processed_hashes()
-    if optimal_point["id"] in processed_hashes:
-        print(f"\n[DEDUP] Data hash already exists in metadata store (hash: {optimal_point['id']}). Scanning alternatives...")
-        alternative = None
-        for dp in data_points:
-            if dp["id"] not in processed_hashes:
-                alternative = dp
-                break
+    selected_point = None
 
-        if not alternative:
-            print("[DEDUP] All data points already processed. Pipeline complete.")
-            return
+    for dp in data_points:
+        if dp["id"] not in processed_hashes:
+            selected_point = dp
+            break
 
-        optimal_point = alternative
-        print(f"\n[DEDUP] Alternative data point selected:")
-        print(f"   Label: {optimal_point['titulo'][:80]}")
-        print(f"   Variance: {optimal_point['desconto']}%")
+    if not selected_point:
+        print("[DEDUP] All identified data points have already been processed.")
+        return
 
-    # Transmit to primary ingestion endpoint
-    success = ingest_to_primary_endpoint(optimal_point)
+    print(f"[OPTIMAL] Selected: {selected_point['titulo'][:60]}... ({selected_point['desconto']}% off)")
 
-    if success:
-        persist_data_hash(optimal_point["id"])
-        synchronize_version_control()
-
-    print("\n" + "=" * 60)
-    print("[DONE] Pipeline execution complete.")
-    print("=" * 60)
-
+    if ingest_to_primary_endpoint(selected_point):
+        persist_data_hash(selected_point["id"])
+        print("[SUCCESS] Data packet transmitted and hash persisted.")
+    else:
+        print("[FAILURE] Transmission failed.")
 
 if __name__ == "__main__":
     main()
