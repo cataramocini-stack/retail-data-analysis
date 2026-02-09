@@ -35,7 +35,7 @@ def send_to_discord(item):
 
 def run():
     print("=" * 60)
-    print("[START] Market Regressor — Mira Universal Ativada")
+    print("[START] Market Regressor — Correção de Sintaxe")
     print("=" * 60)
     
     processed_ids = load_processed_ids()
@@ -50,30 +50,21 @@ def run():
         try:
             page.goto("https://www.amazon.com.br/ofertas", wait_until="load", timeout=90000)
             
-            # ROLAGEM HUMANA: Força a Amazon a renderizar os produtos
-            print("[INFO] Rolando página para despertar produtos...")
-            for _ in range(3):
+            print("[INFO] Estabilizando elementos...")
+            for _ in range(2):
                 page.mouse.wheel(0, 1000)
                 page.wait_for_timeout(2000)
             
-            # MIRA UNIVERSAL: Busca qualquer DIV que tenha um link de produto (/dp/)
-            # Isso ignora se é Grid, Lista ou Carrossel
+            # Mira lógica: DIVs que possuem links de produtos
             cards = page.query_selector_all("div:has(a[href*='/dp/'])")
-            print(f"[INFO] Elementos candidatos detectados: {len(cards)}")
+            print(f"[INFO] Candidatos detectados: {len(cards)}")
             
             found_count = 0
             for card in cards:
                 try:
                     texto_card = card.inner_text()
                     
-                    # Filtro 1: Tem que ter um símbolo de % (desconto)
-                    desc_match = re.search(r'(\d+)%', texto_card)
-                    if not desc_match: continue
-                    desconto = int(desc_match.group(1))
-                    
-                    if desconto < MIN_DISCOUNT: continue
-
-                    # Filtro 2: Pegar o ASIN (ID)
+                    # Busca ASIN
                     link_el = card.query_selector("a[href*='/dp/']")
                     url_raw = link_el.get_attribute("href")
                     asin_match = re.search(r'/([A-Z0-9]{10})(?:[/?]|$)', url_raw)
@@ -82,16 +73,14 @@ def run():
                     
                     if asin in processed_ids: continue
 
-                    # Filtro 3: Limpeza de Título e Preços (Sua lógica excelente)
+                    # Busca Desconto
+                    desc_match = re.search(r'(\d+)%', texto_card)
+                    if not desc_match: continue
+                    desconto = int(desc_match.group(1))
+                    if desconto < MIN_DISCOUNT: continue
+
+                    # Limpeza de Título
                     linhas = [l.strip() for l in texto_card.split('\n') if len(l.strip()) > 5]
                     titulo = "Oferta Amazon"
                     for linha in linhas:
                         if any(x in linha.lower() for x in ["r$", "%", "prime", "oferta", "termina"]): continue
-                        titulo = linha
-                        break
-
-                    precos_raw = re.findall(r'R\$\s?[\d.,]+', texto_card)
-                    precos_num = []
-                    for pr in precos_raw:
-                        try:
-                            val = float(pr.replace('R
