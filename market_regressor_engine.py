@@ -6,11 +6,9 @@ import sys
 import requests
 
 # --- [BOOTSTRAP SYSTEM] ---
-# Resolve o erro de pkg_resources de forma definitiva
 try:
     import pkg_resources
 except ImportError:
-    print("[SYSTEM] Reconfigurando dependências legadas...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "setuptools<70.0.0"])
     import pkg_resources
 # --------------------------
@@ -21,12 +19,11 @@ from playwright_stealth import stealth_sync
 
 load_dotenv()
 
-# Configurações de Ambiente
 INGESTION_ENDPOINT_PRIMARY = os.getenv("INGESTION_ENDPOINT_PRIMARY")
 AFFILIATION_DATA_METRIC = os.getenv("AFFILIATION_DATA_METRIC")
 METADATA_STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "processed_metadata.db")
 SAMPLING_SOURCE_URI = "https://www.amazon.com.br/ofertas"
-VARIANCE_THRESHOLD = 20 # Mínimo de 20% de desconto
+VARIANCE_THRESHOLD = 20
 
 def load_processed_hashes():
     if not os.path.exists(METADATA_STORE): return set()
@@ -44,19 +41,18 @@ def ingest_to_primary_endpoint(data_point):
         connector = "&" if "?" in url_afiliado else "?"
         url_afiliado = f"{url_afiliado}{connector}tag={AFFILIATION_DATA_METRIC}"
 
+    # MONTAGEM DA FRASE ESTILO "OFERTA" (TUDO EM UMA LINHA)
+    # Formato: OFERTA - Nome - DE R$X por R$Y (Z% OFF) 🔥
+    titulo_formatado = (
+        f"OFERTA - {data_point['titulo'][:80]} - "
+        f"DE {data_point['preco_antigo']} por {data_point['preco_atual']} "
+        f"({data_point['desconto']}% OFF) 🔥"
+    )
+
     payload = {
-        "embeds": [{
-            "title": f"🔥 {data_point['titulo'][:250]}",
-            "url": url_afiliado,
-            "color": 0xFF9900,
-            "fields": [
-                {"name": "Desconto", "value": f"**{data_point['desconto']}% OFF**", "inline": True},
-                {"name": "Link", "value": "[Ir para Amazon](" + url_afiliado + ")", "inline": True}
-            ],
-            "image": {"url": data_point['imagem']},
-            "footer": {"text": "Market Regressor — Monitoramento em Tempo Real"}
-        }]
+        "content": f"{titulo_formatado}\n{url_afiliado}"
     }
+    
     try:
         response = requests.post(INGESTION_ENDPOINT_PRIMARY, json=payload, timeout=15)
         return response.status_code < 400
@@ -66,72 +62,65 @@ def run_stochastic_polling():
     data_points = []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        # User agent de Chrome real para evitar bloqueios
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            viewport={'width': 1280, 'height': 800}
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         )
         page = context.new_page()
         stealth_sync(page)
 
-        print(f"[POLLING] Iniciando captura em: {SAMPLING_SOURCE_URI}")
+        print(f"[POLLING] Capturando ofertas em: {SAMPLING_SOURCE_URI}")
         
         try:
-            # Carregamento rápido
-            page.goto(SAMPLING_SOURCE_URI, wait_until="commit", timeout=60000)
-            # Simulação de scroll humano para carregar os produtos "escondidos" (lazy load)
-            for _ in range(3):
-                page.mouse.wheel(0, 800)
-                page.wait_for_timeout(1500)
-        except Exception as e:
-            print(f"[WARN] Navegação interrompida, processando dados parciais...")
+            page.goto(SAMPLING_SOURCE_URI, wait_until="load", timeout=60000)
+            for _ in range(2): # Scroll para carregar
+                page.mouse.wheel(0, 1000)
+                page.wait_for_timeout(2000)
+        except: pass
 
-        # ESTRATÉGIA: Busca por padrão de link de produto (/dp/...)
-        links = page.query_selector_all("a[href*='/dp/'], a[href*='/gp/product/']")
-        print(f"[INFO] {len(links)} links candidatos identificados.")
-
-        seen_ids = set()
-
-        for link in links:
+        # Busca por todos os blocos de oferta
+        items = page.query_selector_all("[data-testid='deal-card'], .a-section.octopus-dlp-asin-section")
+        
+        for item in items:
             try:
-                url_raw = link.get_attribute("href")
-                if not url_raw or "javascript" in url_raw: continue
+                link_el = item.query_selector("a[href*='/dp/'], a[href*='/gp/product/']")
+                if not link_el: continue
                 
-                # Normaliza URL e extrai o ID único (ASIN)
+                url_raw = link_el.get_attribute("href")
                 asin_match = re.search(r'/([A-Z0-9]{10})(?:[/?]|$)', url_raw)
                 if not asin_match: continue
                 item_id = asin_match.group(1)
                 
-                if item_id in seen_ids: continue
-                seen_ids.add(item_id)
-
-                url = f"https://www.amazon.com.br/dp/{item_id}"
-
-                # Analisa o texto ao redor do link para achar o desconto
-                # Subimos para o container pai para ler as informações próximas
-                container = page.evaluate_handle("el => el.closest('div').parentElement", link)
-                bloco_texto = container.evaluate("el => el.innerText")
-
-                # Procura por números seguidos de % (ex: 30%)
-                percent_match = re.search(r'(\d+)%', bloco_texto)
+                # Captura de Preços e Título
+                texto_bloco = item.inner_text()
+                linhas = [l.strip() for l in texto_bloco.split('\n') if l.strip()]
+                
+                # Busca desconto (ex: 30% ou -30%)
+                percent_match = re.search(r'(\d+)%', texto_bloco)
                 desconto = int(percent_match.group(1)) if percent_match else 0
 
                 if desconto >= VARIANCE_THRESHOLD:
-                    # Busca imagem próxima ao link
-                    img_el = container.query_selector("img")
-                    img_url = img_el.get_attribute("src") if img_el else ""
+                    # Título: Geralmente é a linha mais longa ou específica
+                    titulo = link_el.inner_text().strip() or linhas[0]
                     
-                    # Título da oferta
-                    titulo = link.inner_text().strip()
-                    if len(titulo) < 10: # Se o link for curto (ex: imagem), tenta o texto do container
-                        titulo = bloco_texto.split('\n')[0][:100]
+                    # Tenta capturar os valores monetários (Padrão R$ XX,XX)
+                    valores = re.findall(r'R\$\s?\d+[\.,]\d{2}', texto_bloco)
+                    
+                    if len(valores) >= 2:
+                        preco_antigo = valores[1] # Geralmente o segundo valor é o riscado/antigo
+                        preco_atual = valores[0]  # O primeiro é o preço de oferta
+                    elif len(valores) == 1:
+                        preco_antigo = "valor original"
+                        preco_atual = valores[0]
+                    else:
+                        continue # Sem preço, sem post
 
                     data_points.append({
                         "id": item_id,
                         "titulo": titulo,
-                        "url": url,
-                        "desconto": desconto,
-                        "imagem": img_url
+                        "url": f"https://www.amazon.com.br/dp/{item_id}",
+                        "preco_antigo": preco_antigo,
+                        "preco_atual": preco_atual,
+                        "desconto": desconto
                     })
             except: continue
             
@@ -140,28 +129,21 @@ def run_stochastic_polling():
 
 def main():
     print("=" * 60)
-    print("[START] Market Regressor Engine — Pipeline Ativo")
+    print("[START] Market Regressor — Visual Mode")
     print("=" * 60)
     
     data_points = run_stochastic_polling()
-    
-    if not data_points:
-        print("[INFO] Nenhuma nova oferta detectada nesta rodada.")
-        return
+    if not data_points: return
 
-    # Ordena: maior desconto primeiro
     data_points.sort(key=lambda x: x['desconto'], reverse=True)
     processed_hashes = load_processed_hashes()
     
     for item in data_points:
         if item["id"] not in processed_hashes:
-            print(f"[MATCH] Postando: {item['id']} com {item['desconto']}% OFF")
             if ingest_to_primary_endpoint(item):
                 persist_data_hash(item["id"])
-                print("[SUCCESS] Webhook disparado com sucesso.")
-                break # Envia um por vez para evitar bloqueio
-    else:
-        print("[DEDUP] Todas as ofertas encontradas já foram processadas.")
+                print(f"[SUCCESS] Postado: {item['id']}")
+                break 
 
 if __name__ == "__main__":
     main()
