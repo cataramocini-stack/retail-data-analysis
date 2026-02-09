@@ -111,4 +111,22 @@ def run():
                            f"💰 **DE {p_de_display} por R$ {p_por_str} ({desconto_site}% OFF) 🔥**\n"
                            f"🛒 Link: https://www.amazon.com.br/dp/{asin}?tag={AFFILIATE_TAG}")
                     
-                    res = requests.post(DISCORD_WEBHOOK, json={"content": msg}, timeout=15
+                    res = requests.post(DISCORD_WEBHOOK, json={"content": msg}, timeout=15)
+                    if res.status_code < 400:
+                        save_id(asin)
+                        round_ids.add(asin)
+                        print(f"[SUCCESS] {asin} - {titulo[:30]}")
+                        found_count += 1
+                        if found_count >= 10: break 
+
+                except Exception:
+                    continue
+                
+        except Exception as e: 
+            print(f"[ERRO] Falha: {e}")
+        finally:
+            browser.close()
+            print(f"[FINISHED] Enviados: {found_count}")
+
+if __name__ == "__main__":
+    run()
