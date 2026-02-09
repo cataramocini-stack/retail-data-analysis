@@ -19,60 +19,71 @@ def save_id(asin):
 
 def run():
     print("=" * 60)
-    print("[START] Market Regressor — Versão Final Sem Cortes")
+    print("[START] Market Regressor — Versão Final Estabilizada")
     print("=" * 60)
+    
     processed_ids = load_processed_ids()
     round_ids = set()
+    found_count = 0 # Inicializado aqui para evitar erro de variável
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-        )
+        # User-agent atualizado
+        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        context = browser.new_context(user_agent=ua, viewport={'width': 1280, 'height': 720})
         page = context.new_page()
+        
         try:
             print("[POLLING] Acessando Amazon...")
-            page.goto("https://www.amazon.com.br/ofertas", wait_until="networkidle", timeout=90000)
-            page.mouse.wheel(0, 1000)
-            page.wait_for_timeout(5000)
+            # Mudança: 'load' é mais rápido e menos propenso a timeout que 'networkidle'
+            page.goto("https://www.amazon.com.br/ofertas", wait_until="load", timeout=60000)
             
-            # Busca ampliada por qualquer item de oferta
+            page.wait_for_timeout(5000)
+            page.mouse.wheel(0, 800)
+            page.wait_for_timeout(3000)
+            
+            # Busca por links de produtos
             cards = page.query_selector_all("div:has(a[href*='/dp/'])")
             print(f"[INFO] Elementos detectados: {len(cards)}")
             
-            found_count = 0
             for card in cards:
                 try:
-                    # 1. ASIN e Link
                     link_el = card.query_selector("a[href*='/dp/']")
                     if not link_el: continue
-                    asin = re.search(r'/([A-Z0-9]{10})', link_el.get_attribute("href")).group(1)
+                    
+                    href = link_el.get_attribute("href")
+                    asin_match = re.search(r'/([A-Z0-9]{10})', href)
+                    if not asin_match: continue
+                    asin = asin_match.group(1)
+                    
                     if asin in processed_ids or asin in round_ids: continue
 
-                    # 2. Desconto e Texto
                     txt = card.inner_text()
                     d_match = re.search(r'(\d+)%', txt)
-                    if not d_match or int(d_match.group(1)) < 15: continue
+                    if not d_match: continue
                     desconto = d_match.group(1)
+                    if int(desconto) < 15: continue
 
-                    # 3. Título (Pega o ALT da imagem para ser o nome real)
+                    # Título via ALT da imagem (o mais limpo)
                     img = card.query_selector("img")
-                    titulo = img.get_attribute("alt") if img else "Produto"
+                    titulo = img.get_attribute("alt") if img else ""
                     if len(titulo) < 10: continue
 
-                    # 4. Preços (Busca R$)
+                    # Preços
                     precos = re.findall(r'R\$\s?[\d.,]+', txt)
                     vals = []
                     for p_raw in precos:
-                        v = float(p_raw.replace('R$', '').replace('.', '').replace(',', '.').strip())
-                        if v not in [x[0] for x in vals]: vals.append((v, p_raw))
+                        try:
+                            v = float(p_raw.replace('R$', '').replace('.', '').replace(',', '.').strip())
+                            if v not in [x[0] for x in vals]: vals.append((v, p_raw))
+                        except: continue
                     
-                    vals.sort()
                     if not vals: continue
+                    vals.sort()
                     p_por = vals[0][1]
                     p_de = vals[-1][1] if len(vals) > 1 else "---"
 
-                    # POSTAGEM FORMATADA
+                    # Formatação idêntica ao seu pedido
                     msg = (f"📦 **OFERTA - {titulo[:90]} - "
                            f"DE {p_de} por {p_por} ({desconto}% OFF) 🔥**\n"
                            f"https://www.amazon.com.br/dp/{asin}?tag={AFFILIATE_TAG}")
@@ -85,7 +96,9 @@ def run():
                         found_count += 1
                         if found_count >= 5: break
                 except: continue
-        except Exception as e: print(f"[ERRO] {e}")
+                
+        except Exception as e:
+            print(f"[ERRO] {e}")
         finally:
             browser.close()
             print(f"[FINISHED] Enviados: {found_count}")
