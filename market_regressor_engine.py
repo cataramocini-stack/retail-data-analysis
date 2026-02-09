@@ -31,11 +31,12 @@ def send_to_discord(item):
     try:
         requests.post(DISCORD_WEBHOOK, json=payload, timeout=15)
         return True
-    except: return False
+    except:
+        return False
 
 def run():
     print("=" * 60)
-    print("[START] Market Regressor — Correção de Sintaxe")
+    print("[START] Market Regressor — Versão Final Estável")
     print("=" * 60)
     
     processed_ids = load_processed_ids()
@@ -50,22 +51,22 @@ def run():
         try:
             page.goto("https://www.amazon.com.br/ofertas", wait_until="load", timeout=90000)
             
-            print("[INFO] Estabilizando elementos...")
+            print("[INFO] Rolando página...")
             for _ in range(2):
                 page.mouse.wheel(0, 1000)
                 page.wait_for_timeout(2000)
             
-            # Mira lógica: DIVs que possuem links de produtos
             cards = page.query_selector_all("div:has(a[href*='/dp/'])")
-            print(f"[INFO] Candidatos detectados: {len(cards)}")
+            print(f"[INFO] Elementos candidatos: {len(cards)}")
             
             found_count = 0
             for card in cards:
                 try:
                     texto_card = card.inner_text()
                     
-                    # Busca ASIN
+                    # 1. Busca ASIN
                     link_el = card.query_selector("a[href*='/dp/']")
+                    if not link_el: continue
                     url_raw = link_el.get_attribute("href")
                     asin_match = re.search(r'/([A-Z0-9]{10})(?:[/?]|$)', url_raw)
                     if not asin_match: continue
@@ -73,14 +74,13 @@ def run():
                     
                     if asin in processed_ids: continue
 
-                    # Busca Desconto
+                    # 2. Busca Desconto
                     desc_match = re.search(r'(\d+)%', texto_card)
                     if not desc_match: continue
                     desconto = int(desc_match.group(1))
                     if desconto < MIN_DISCOUNT: continue
 
-                    # Limpeza de Título
+                    # 3. Limpeza de Título
                     linhas = [l.strip() for l in texto_card.split('\n') if len(l.strip()) > 5]
                     titulo = "Oferta Amazon"
                     for linha in linhas:
-                        if any(x in linha.lower() for x in ["r$", "%", "prime", "oferta", "termina"]): continue
