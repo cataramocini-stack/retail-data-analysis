@@ -19,7 +19,7 @@ def save_id(asin):
 
 def run():
     print("=" * 60)
-    print("[START] Market Regressor — Versão Final 100% Funcional")
+    print("[START] Market Regressor — Versão Compacta")
     print("=" * 60)
     
     processed_ids = load_processed_ids()
@@ -44,13 +44,11 @@ def run():
                 page.mouse.wheel(0, 1500)
                 page.wait_for_timeout(2000)
 
-            # Usa o seletor que funcionou no seu log
             cards = page.query_selector_all("div:has(a[href*='/dp/'])")
             print(f"[INFO] Elementos detectados: {len(cards)}")
             
             for card in cards:
                 try:
-                    # 1. Link e ASIN
                     link_el = card.query_selector("a[href*='/dp/']")
                     if not link_el: continue
                     href = link_el.get_attribute("href")
@@ -60,47 +58,39 @@ def run():
 
                     if asin in processed_ids or asin in round_ids: continue
 
-                    # 2. Título (Pega o Alt da imagem ou o texto do link)
                     img = card.query_selector("img")
                     titulo = img.get_attribute("alt") if img else card.inner_text().split('\n')[0]
                     if len(titulo) < 10: continue
 
-                    # 3. Extração de Preços via Texto (Mais robusto para grades variadas)
                     card_text = card.inner_text()
-                    
-                    # Captura a porcentagem de desconto anunciada
                     d_match = re.search(r'(\d+)%', card_text)
                     desconto_site = int(d_match.group(1)) if d_match else 0
-                    if desconto_site < 5: continue # Filtro mínimo
+                    if desconto_site < 5: continue 
 
-                    # Captura todos os valores em R$ presentes no card
                     precos_encontrados = re.findall(r'R\$\s?([\d\.]+,[\d]{2})', card_text)
                     if not precos_encontrados: continue
 
-                    # Converte para float e remove duplicatas mantendo a ordem
                     vals = []
                     for p in precos_encontrados:
                         num = float(p.replace('.', '').replace(',', '.'))
                         if num not in [v[0] for v in vals]:
                             vals.append((num, f"R$ {p}"))
                     
-                    vals.sort() # Menor primeiro
+                    vals.sort()
 
                     if len(vals) >= 2:
                         p_por_val, p_por_str = vals[0]
-                        p_de_val, p_de_str = vals[-1] # O maior é o original
+                        p_de_val, p_de_str = vals[-1]
                     else:
                         p_por_val, p_por_str = vals[0]
                         p_de_val, p_de_str = 0, "---"
 
-                    # 4. FILTRO ANTI-ERRO (MOCHILA/FRALDA)
                     if p_de_val > 0:
                         calc_desc = 100 - (p_por_val / p_de_val * 100)
-                        # Se a diferença entre o desconto real e o do site for gigante, ignoramos
                         if abs(calc_desc - desconto_site) > 20: continue 
 
-                    # 5. MONTAGEM E ENVIO
-                    msg = (f"📦 **OFERTA - {titulo[:90]}**\n\n"
+                    # --- MENSAGEM COMPACTA (Sem o \n extra) ---
+                    msg = (f"📦 **OFERTA - {titulo[:90]}**\n"
                            f"💰 **DE {p_de_str} por {p_por_str} ({desconto_site}% OFF) 🔥**\n"
                            f"🛒 Compre: https://www.amazon.com.br/dp/{asin}?tag={AFFILIATE_TAG}")
                     
@@ -108,7 +98,7 @@ def run():
                     if res.status_code < 400:
                         save_id(asin)
                         round_ids.add(asin)
-                        print(f"[SUCCESS] {asin} - {p_por_str}")
+                        print(f"[SUCCESS] {asin}")
                         found_count += 1
                         if found_count >= 10: break 
 
