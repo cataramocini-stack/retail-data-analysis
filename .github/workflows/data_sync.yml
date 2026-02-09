@@ -22,16 +22,27 @@ jobs:
       - name: 🐍 Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11" # Alterado para 3.11 para garantir compatibilidade com pkg_resources
+          python-version: "3.11" # Versão estável para automação com Playwright Stealth
 
       - name: 📦 Instalar dependências
         run: |
           python -m pip install --upgrade pip
-          # Instalamos o setuptools primeiro para fornecer o pkg_resources que o stealth_sync exige
-          pip install setuptools==70.0.0
+          
+          # FORÇA a instalação de uma versão do setuptools que contém o pkg_resources
+          # Usamos a versão 69 para garantir compatibilidade total
+          pip install "setuptools<70.0.0"
+          
+          # Instala as demais dependências do projeto
           pip install -r requirements.txt
+          
+          # Instala o navegador Chromium necessário para o scraping
           playwright install chromium
           playwright install-deps chromium
+
+      - name: 🔍 Validar ambiente
+        run: |
+          # Teste rápido: Se falhar aqui, o log nos dirá exatamente o porquê
+          python -c "import pkg_resources; print('✅ Módulo pkg_resources carregado com sucesso!')"
 
       - name: 🚀 Execute Stochastic Price Polling
         env:
@@ -51,14 +62,4 @@ jobs:
       - name: 🔄 Commit e Push automático
         run: |
           git config user.name "Market Regressor Bot"
-          git config user.email "bot@market-regressor.local"
-          
-          # Verifica se o ficheiro de base de dados foi alterado
-          git add processed_metadata.db
-          
-          if git diff --cached --quiet; then
-            echo "Nenhuma nova oferta processada. Nada para commitar."
-          else
-            git commit -m "data: update processed metadata store [skip ci]"
-            git push
-          fi
+          git config user.email "bot@market
