@@ -41,7 +41,7 @@ def ingest_to_primary_endpoint(data_point):
         connector = "&" if "?" in url_afiliado else "?"
         url_afiliado = f"{url_afiliado}{connector}tag={AFFILIATION_DATA_METRIC}"
 
-    # FORMATO: 📦 **OFERTA - Nome - DE R$X por R$Y (Z% OFF) 🔥**
+    # MONTAGEM FINAL COM NEGRITO E EMOJI
     frase = (
         f"📦 **OFERTA - {data_point['titulo']} - "
         f"DE {data_point['preco_de']} por {data_point['preco_por']} "
@@ -49,7 +49,6 @@ def ingest_to_primary_endpoint(data_point):
     )
 
     payload = {"content": f"{frase}\n{url_afiliado}"}
-    
     try:
         response = requests.post(INGESTION_ENDPOINT_PRIMARY, json=payload, timeout=15)
         return response.status_code < 400
@@ -68,24 +67,18 @@ def run_stochastic_polling():
         print(f"[POLLING] Capturando em: {SAMPLING_SOURCE_URI}")
         
         try:
-            # Espera carregar e dá um tempo extra para o JS da Amazon
             page.goto(SAMPLING_SOURCE_URI, wait_until="networkidle", timeout=60000)
-            page.wait_for_timeout(7000) 
-            
-            # Scroll para ativar o carregamento das ofertas (Lazy Load)
+            page.wait_for_timeout(8000) # Tempo extra para carregar preços completos
             for _ in range(5):
                 page.mouse.wheel(0, 800)
                 page.wait_for_timeout(1000)
-        except: 
-            print("[WARN] Timeout na página, tentando processar o que carregou...")
+        except: pass
 
-        # Busca containers de produtos
         cards = page.query_selector_all("div:has(a[href*='/dp/'])")
         seen_ids = set()
 
         for card in cards:
             try:
-                # 1. Busca Link e ASIN
                 link_el = card.query_selector("a[href*='/dp/']")
                 if not link_el: continue
                 
@@ -97,36 +90,53 @@ def run_stochastic_polling():
                 if asin in seen_ids: continue
                 seen_ids.add(asin)
 
-                # 2. Captura Texto e identifica Nome do Produto
                 texto_card = card.inner_text()
-                linhas = [l.strip() for l in texto_card.split('\n') if len(l.strip()) > 3]
                 
-                # Filtra linhas para achar o título (remove o que tem R$ ou %)
-                candidatos_titulo = [l for l in linhas if "R$" not in l and "%" not in l and "Oferta" not in l]
+                # --- LIMPEZA DE TÍTULO AVANÇADA ---
+                # Remove cronômetros, avisos de Prime e lixo de marketing
+                linhas = [l.strip() for l in texto_card.split('\n') if len(l.strip()) > 5]
                 
-                # Prioridade: Texto do link (se for longo) > Primeira linha candidata > "Produto Amazon"
-                titulo_link = link_el.inner_text().strip()
-                if titulo_link and len(titulo_link) > 15 and "%" not in titulo_link:
-                    titulo = titulo_link
-                elif candidatos_titulo:
-                    titulo = candidatos_titulo[0]
-                else:
-                    titulo = "Produto em Oferta Especial"
+                # Procura a primeira linha que NÃO seja preço, desconto ou lixo
+                titulo = "Produto em Oferta"
+                for linha in linhas:
+                    l_lower = linha.lower()
+                    if any(x in l_lower for x in ["termina em", "oferta", "r$", "%", "prime", "dias"]):
+                        continue
+                    titulo = linha
+                    break
+                
+                # Se ainda estiver ruim, tenta o alt da imagem
+                if titulo == "Produto em Oferta":
+                    img = card.query_selector("img")
+                    if img:
+                        alt = img.get_attribute("alt")
+                        if alt and len(alt) > 10: titulo = alt
 
-                # 3. Mineração de Preços
-                precos_encontrados = re.findall(r'R\$\s?\d+[.,]\d{2}', texto_card)
-                if not precos_encontrados: continue
+                # --- CAPTURA DE PREÇOS BLINDADA ---
+                # Pega todos os R$ e garante que não pegamos números cortados
+                precos_raw = re.findall(r'R\$\s?[\d.,]+', texto_card)
+                if not precos_raw: continue
 
+                # Filtra apenas preços que pareçam válidos (ex: R$ 10,00)
+                precos_validos = []
+                for p in precos_raw:
+                    if ',' in p: precos_validos.append(p)
+
+                if not precos_validos: continue
+
+                # Converte para float para ordenar e achar o maior/menor
                 precos_num = []
-                for ps in precos_encontrados:
-                    n = float(ps.replace('R$', '').replace('.', '').replace(',', '.').strip())
-                    precos_num.append((n, ps))
+                for ps in precos_validos:
+                    try:
+                        n = float(ps.replace('R$', '').replace('.', '').replace(',', '.').strip())
+                        precos_num.append((n, ps))
+                    except: continue
                 
                 precos_num.sort()
                 preco_por = precos_num[0][1]
                 preco_de = precos_num[-1][1] if len(precos_num) > 1 else "---"
 
-                # 4. Desconto
+                # Desconto
                 desc_match = re.search(r'(\d+)%', texto_card)
                 desconto = int(desc_match.group(1)) if desc_match else 0
                 
@@ -134,7 +144,7 @@ def run_stochastic_polling():
 
                 data_points.append({
                     "id": asin,
-                    "titulo": titulo[:85].strip(), # Nome agora garantido
+                    "titulo": titulo[:80].strip(),
                     "url": f"https://www.amazon.com.br/dp/{asin}",
                     "preco_de": preco_de,
                     "preco_por": preco_por,
@@ -147,23 +157,22 @@ def run_stochastic_polling():
 
 def main():
     print("=" * 60)
-    print("[START] Market Regressor — Style & Name Fixed")
+    print("[START] Market Regressor — Bug Fix Mode")
     print("=" * 60)
     
     data_points = run_stochastic_polling()
-    print(f"[INFO] {len(data_points)} ofertas processadas.")
-
-    if not data_points: return
+    if not data_points: 
+        print("[INFO] Nada encontrado.")
+        return
 
     data_points.sort(key=lambda x: x['desconto'], reverse=True)
     processed_hashes = load_processed_hashes()
     
     for item in data_points:
         if item["id"] not in processed_hashes:
-            print(f"[MATCH] Enviando: {item['titulo']}")
             if ingest_to_primary_endpoint(item):
                 persist_data_hash(item["id"])
-                print("[SUCCESS] Postado!")
+                print(f"[SUCCESS] Postado: {item['titulo']}")
                 return 
 
 if __name__ == "__main__":
