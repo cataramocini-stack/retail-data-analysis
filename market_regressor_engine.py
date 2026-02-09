@@ -41,12 +41,11 @@ def ingest_to_primary_endpoint(data_point):
         connector = "&" if "?" in url_afiliado else "?"
         url_afiliado = f"{url_afiliado}{connector}tag={AFFILIATION_DATA_METRIC}"
 
-    # O FORMATO QUE VOCÊ GOSTA: TUDO EM UMA LINHA
-    # OFERTA - nome - DE (R$ X) por (R$ Y) (Z% OFF) 🔥
+    # FORMATO ATUALIZADO: 📦 **OFERTA - Nome do Produto - DE R$X por R$Y (Z% OFF) 🔥**
     frase = (
-        f"OFERTA - {data_point['titulo']} - "
+        f"📦 **OFERTA - {data_point['titulo']} - "
         f"DE {data_point['preco_de']} por {data_point['preco_por']} "
-        f"({data_point['desconto']}% OFF) 🔥"
+        f"({data_point['desconto']}% OFF) 🔥**"
     )
 
     payload = {"content": f"{frase}\n{url_afiliado}"}
@@ -69,27 +68,19 @@ def run_stochastic_polling():
         print(f"[POLLING] Capturando em: {SAMPLING_SOURCE_URI}")
         
         try:
-            # Vamos esperar o carregamento completo e dar um tempo para os scripts da Amazon rodarem
             page.goto(SAMPLING_SOURCE_URI, wait_until="networkidle", timeout=60000)
             page.wait_for_timeout(5000)
-            
-            # Scroll mais "pesado" para carregar as ofertas
             for _ in range(4):
                 page.mouse.wheel(0, 1000)
                 page.wait_for_timeout(1000)
-        except: 
-            print("[WARN] Tempo de espera excedido, tentando processar o que carregou.")
+        except: pass
 
-        # Buscamos por qualquer container que tenha cara de produto e contenha um link
-        # Essa busca é mais genérica para não quebrar se a Amazon mudar as classes
+        # Seleciona os cards de oferta
         cards = page.query_selector_all("div:has(a[href*='/dp/'])")
-        
         seen_ids = set()
-        print(f"[DEBUG] {len(cards)} blocos suspeitos encontrados.")
 
         for card in cards:
             try:
-                # Extrair o link primeiro
                 link_el = card.query_selector("a[href*='/dp/']")
                 if not link_el: continue
                 
@@ -101,80 +92,69 @@ def run_stochastic_polling():
                 if asin in seen_ids: continue
                 seen_ids.add(asin)
 
-                # Captura o texto total do bloco de oferta
                 texto_total = card.inner_text()
+                linhas = [l.strip() for l in texto_total.split('\n') if len(l.strip()) > 1]
+
+                # --- LÓGICA DE TÍTULO ROBUSTA ---
+                # Se o link_el.inner_text vier com "45% OFF", nós ignoramos e buscamos o nome real
+                titulo_candidato = link_el.inner_text().strip()
                 
-                # Se não tem o símbolo de %, provavelmente não é uma oferta com desconto visível
-                if "%" not in texto_total: continue
+                if not titulo_candidato or "%" in titulo_candidato or "R$" in titulo_candidato:
+                    # Se o título do link for inválido, pegamos a linha mais longa do card (geralmente é o nome)
+                    # Filtramos linhas que contém preços ou porcentagens
+                    candidatos = [l for l in linhas if "%" not in l and "R$" not in l and "Oferta" not in l]
+                    titulo = candidatos[0] if candidatos else "Produto em Oferta"
+                else:
+                    titulo = titulo_candidato
 
-                # Mineração de Preços (R$ 0,00)
-                # O regex pega o padrão brasileiro de moeda
+                # --- PREÇOS E DESCONTO ---
                 precos_encontrados = re.findall(r'R\$\s?\d+[.,]\d{2}', texto_total)
-                if len(precos_encontrados) < 1: continue
+                if not precos_encontrados: continue
 
-                # Lógica de Preços:
-                # Se tiver 2 preços, o maior é o "DE" e o menor é o "POR"
-                # Se tiver apenas 1, usamos ele como "POR" e deixamos o "DE" genérico
                 precos_numericos = []
                 for p_str in precos_encontrados:
                     n = float(p_str.replace('R$', '').replace('.', '').replace(',', '.').strip())
                     precos_numericos.append((n, p_str))
                 
-                precos_numericos.sort() # Menor primeiro
-                
+                precos_numericos.sort()
                 preco_por = precos_numericos[0][1]
                 preco_de = precos_numericos[-1][1] if len(precos_numericos) > 1 else "---"
 
-                # Extração do Desconto
                 desc_match = re.search(r'(\d+)%', texto_total)
                 desconto = int(desc_match.group(1)) if desc_match else 0
                 
                 if desconto < VARIANCE_THRESHOLD: continue
 
-                # Título (limpeza radical)
-                titulo_sujo = link_el.inner_text().strip() or texto_total.split('\n')[0]
-                titulo = titulo_sujo.replace('\n', ' ').strip()[:70]
-
                 data_points.append({
                     "id": asin,
-                    "titulo": titulo,
+                    "titulo": titulo[:80].strip(), # Corta para não ficar gigante
                     "url": f"https://www.amazon.com.br/dp/{asin}",
                     "preco_de": preco_de,
                     "preco_por": preco_por,
                     "desconto": desconto
                 })
-            except:
-                continue
+            except: continue
             
         browser.close()
     return data_points
 
 def main():
     print("=" * 60)
-    print("[START] Market Regressor — Visual One-Line Mode")
+    print("[START] Market Regressor — Final Style Mode")
     print("=" * 60)
     
     data_points = run_stochastic_polling()
-    
-    # Se não achar nada no modo normal, o bot avisará aqui
-    if not data_points:
-        print("[INFO] Zero ofertas detectadas. Verificando bloqueio ou mudança de layout.")
-        return
+    if not data_points: return
 
-    print(f"[INFO] {len(data_points)} ofertas encontradas.")
     data_points.sort(key=lambda x: x['desconto'], reverse=True)
-    
     processed_hashes = load_processed_hashes()
     
     for item in data_points:
         if item["id"] not in processed_hashes:
-            print(f"[MATCH] Tentando postar: {item['titulo']}")
             if ingest_to_primary_endpoint(item):
                 persist_data_hash(item["id"])
-                print("[SUCCESS] Postado no Discord com sucesso!")
-                return 
-    
-    print("[DEDUP] Tudo o que foi encontrado já tinha sido postado.")
+                print(f"[SUCCESS] Postado: {item['titulo']}")
+                break 
 
 if __name__ == "__main__":
     main()
