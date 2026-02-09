@@ -19,6 +19,7 @@ from playwright_stealth import stealth_sync
 
 load_dotenv()
 
+# Configurações
 INGESTION_ENDPOINT_PRIMARY = os.getenv("INGESTION_ENDPOINT_PRIMARY")
 AFFILIATION_DATA_METRIC = os.getenv("AFFILIATION_DATA_METRIC")
 METADATA_STORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "processed_metadata.db")
@@ -41,16 +42,16 @@ def ingest_to_primary_endpoint(data_point):
         connector = "&" if "?" in url_afiliado else "?"
         url_afiliado = f"{url_afiliado}{connector}tag={AFFILIATION_DATA_METRIC}"
 
-    # MONTAGEM DA FRASE ESTILO "OFERTA" (TUDO EM UMA LINHA)
-    # Formato: OFERTA - Nome - DE R$X por R$Y (Z% OFF) 🔥
-    titulo_formatado = (
-        f"OFERTA - {data_point['titulo'][:80]} - "
-        f"DE {data_point['preco_antigo']} por {data_point['preco_atual']} "
+    # MONTAGEM DO TEXTO (EXATAMENTE COMO VOCÊ PEDIU)
+    # OFERTA - Nome do produto - DE (Preço Original) por (Preço com Desconto) (% do desconto) 🔥
+    frase_oferta = (
+        f"OFERTA - {data_point['titulo']} - "
+        f"DE {data_point['preco_de']} por {data_point['preco_por']} "
         f"({data_point['desconto']}% OFF) 🔥"
     )
 
     payload = {
-        "content": f"{titulo_formatado}\n{url_afiliado}"
+        "content": f"{frase_oferta}\n{url_afiliado}"
     }
     
     try:
@@ -68,60 +69,74 @@ def run_stochastic_polling():
         page = context.new_page()
         stealth_sync(page)
 
-        print(f"[POLLING] Capturando ofertas em: {SAMPLING_SOURCE_URI}")
+        print(f"[POLLING] Capturando em: {SAMPLING_SOURCE_URI}")
         
         try:
             page.goto(SAMPLING_SOURCE_URI, wait_until="load", timeout=60000)
-            for _ in range(2): # Scroll para carregar
-                page.mouse.wheel(0, 1000)
-                page.wait_for_timeout(2000)
+            page.wait_for_timeout(3000)
+            # Scroll para carregar os produtos dinâmicos
+            page.mouse.wheel(0, 1500)
+            page.wait_for_timeout(2000)
         except: pass
 
-        # Busca por todos os blocos de oferta
-        items = page.query_selector_all("[data-testid='deal-card'], .a-section.octopus-dlp-asin-section")
+        # Captura todos os blocos de produtos que tenham links de produto
+        cards = page.query_selector_all("div:has(a[href*='/dp/']), div:has(a[href*='/gp/product/'])")
         
-        for item in items:
+        seen_asins = set()
+
+        for card in cards:
             try:
-                link_el = item.query_selector("a[href*='/dp/'], a[href*='/gp/product/']")
+                # 1. Busca o Link e o ASIN (ID do produto)
+                link_el = card.query_selector("a[href*='/dp/'], a[href*='/gp/product/']")
                 if not link_el: continue
-                
                 url_raw = link_el.get_attribute("href")
                 asin_match = re.search(r'/([A-Z0-9]{10})(?:[/?]|$)', url_raw)
                 if not asin_match: continue
-                item_id = asin_match.group(1)
+                asin = asin_match.group(1)
                 
-                # Captura de Preços e Título
-                texto_bloco = item.inner_text()
-                linhas = [l.strip() for l in texto_bloco.split('\n') if l.strip()]
+                if asin in seen_asins: continue
+                seen_asins.add(asin)
+
+                # 2. Captura todo o texto do card para minerar preços
+                texto_card = card.inner_text()
                 
-                # Busca desconto (ex: 30% ou -30%)
-                percent_match = re.search(r'(\d+)%', texto_bloco)
-                desconto = int(percent_match.group(1)) if percent_match else 0
+                # 3. Busca Desconto (%)
+                desc_match = re.search(r'(\d+)%', texto_card)
+                if not desc_match: continue
+                desconto = int(desc_match.group(1))
+                if desconto < VARIANCE_THRESHOLD: continue
 
-                if desconto >= VARIANCE_THRESHOLD:
-                    # Título: Geralmente é a linha mais longa ou específica
-                    titulo = link_el.inner_text().strip() or linhas[0]
-                    
-                    # Tenta capturar os valores monetários (Padrão R$ XX,XX)
-                    valores = re.findall(r'R\$\s?\d+[\.,]\d{2}', texto_bloco)
-                    
-                    if len(valores) >= 2:
-                        preco_antigo = valores[1] # Geralmente o segundo valor é o riscado/antigo
-                        preco_atual = valores[0]  # O primeiro é o preço de oferta
-                    elif len(valores) == 1:
-                        preco_antigo = "valor original"
-                        preco_atual = valores[0]
-                    else:
-                        continue # Sem preço, sem post
+                # 4. Busca Preços (Regex para R$ 0,00)
+                precos = re.findall(r'R\$\s?\d+[.,]\d{2}', texto_card)
+                if not precos: continue
+                
+                # Lógica: O menor preço costuma ser o "POR" e o maior o "DE"
+                # Limpamos os valores para comparar numericamente
+                valores_limpos = []
+                for p_str in precos:
+                    val = float(p_str.replace('R$', '').replace('.', '').replace(',', '.').strip())
+                    valores_limpos.append((val, p_str))
+                
+                valores_limpos.sort() # Ordena do menor para o maior
+                
+                preco_por = valores_limpos[0][1] # Menor valor
+                preco_de = valores_limpos[-1][1] if len(valores_limpos) > 1 else "Preço Original"
 
-                    data_points.append({
-                        "id": item_id,
-                        "titulo": titulo,
-                        "url": f"https://www.amazon.com.br/dp/{item_id}",
-                        "preco_antigo": preco_antigo,
-                        "preco_atual": preco_atual,
-                        "desconto": desconto
-                    })
+                # 5. Busca Título (melhorado)
+                titulo = link_el.inner_text().strip()
+                if len(titulo) < 10:
+                    # Se o link for vazio (imagem), pega a primeira linha de texto que não seja preço/desconto
+                    linhas = [l.strip() for l in texto_card.split('\n') if len(l.strip()) > 10]
+                    titulo = linhas[0] if linhas else "Oferta Especial"
+
+                data_points.append({
+                    "id": asin,
+                    "titulo": titulo[:100],
+                    "url": f"https://www.amazon.com.br/dp/{asin}",
+                    "preco_de": preco_de,
+                    "preco_por": preco_por,
+                    "desconto": desconto
+                })
             except: continue
             
         browser.close()
@@ -129,20 +144,24 @@ def run_stochastic_polling():
 
 def main():
     print("=" * 60)
-    print("[START] Market Regressor — Visual Mode")
+    print("[START] Market Regressor — Estilo de Postagem Clássico")
     print("=" * 60)
     
     data_points = run_stochastic_polling()
+    print(f"[INFO] {len(data_points)} ofertas qualificadas encontradas.")
+
     if not data_points: return
 
+    # Ordena por desconto
     data_points.sort(key=lambda x: x['desconto'], reverse=True)
     processed_hashes = load_processed_hashes()
     
     for item in data_points:
         if item["id"] not in processed_hashes:
+            print(f"[MATCH] Postando: {item['id']}")
             if ingest_to_primary_endpoint(item):
                 persist_data_hash(item["id"])
-                print(f"[SUCCESS] Postado: {item['id']}")
+                print("[SUCCESS] Post enviado ao Discord.")
                 break 
 
 if __name__ == "__main__":
