@@ -10,58 +10,51 @@ AFFILIATE_TAG = os.getenv("AFFILIATION_DATA_METRIC", "scriptoriu01a-20")
 MIN_DISCOUNT = 5
 
 def send_to_discord(product):
-    payload = {"content": f"🚨 **OFERTA!** {product['discount']}% OFF\n📦 **{product['title']}**\n💰 {product['price']}\n🔗 {product['link']}?tag={AFFILIATE_TAG}"}
+    payload = {"content": f"🚨 **OFERTA ENCONTRADA!**\n📦 **{product['title']}**\n💰 Preço: {product['price']}\n📉 Desconto: {product['discount']}%\n🔗 Link: {product['link']}?tag={AFFILIATE_TAG}"}
     try: requests.post(DISCORD_WEBHOOK, json=payload)
     except: pass
 
 def run():
     print("="*60)
-    print("[START] Market Regressor — Camuflagem Ativada")
+    print("[START] Market Regressor — Ajuste de Grid Detectado")
     print("="*60)
     with sync_playwright() as p:
-        # Lançamos com argumentos que escondem o fato de ser automação
-        browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            viewport={'width': 1920, 'height': 1080}
-        )
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         page = context.new_page()
         
-        print("[POLLING] Tentando acessar Amazon (Modo Furtivo)...")
+        print("[POLLING] Acessando a vitrine de ofertas...")
         try:
-            # Vamos para a home primeiro para criar um 'rastro' humano
-            page.goto("https://www.amazon.com.br", wait_until="domcontentloaded")
-            page.wait_for_timeout(3000)
+            # Acessando a URL exata da sua foto
+            page.goto("https://www.amazon.com.br/ofertas", wait_until="domcontentloaded")
+            page.wait_for_timeout(10000) # Tempo para carregar os cards da imagem
             
-            # Agora sim vamos para as ofertas
-            page.goto("https://www.amazon.com.br/gp/goldbox", wait_until="domcontentloaded")
-            page.wait_for_timeout(10000)
+            # Novo seletor baseado no grid da sua imagem
+            items = page.query_selector_all("[data-testid='grid-desktop-item']")
+            print(f"[INFO] Itens detectados no grid: {len(items)}")
             
-            # Novo seletor mais abrangente
-            items = page.query_selector_all("[data-testid='grid-desktop-item'], .dealContainer")
-            print(f"[INFO] Itens detectados: {len(items)}")
-            
-            # Se não detectar nada, tira foto pra gente ver o bloqueio
-            if len(items) == 0:
-                page.screenshot(path="bloqueio.png")
-                print("[!] Bloqueio detectado. Foto 'bloqueio.png' salva.")
-
             for item in items:
                 try:
-                    title_el = item.query_selector(".a-truncate-cut, h3, [class*='dealTitleText']")
-                    title = title_el.inner_text().strip()
+                    # Título: Na foto, ele usa uma classe de truncamento
+                    title_el = item.query_selector("a[class*='a-link-normal'] span, [class*='Title']")
+                    title = title_el.inner_text().strip() if title_el else "Produto sem título"
                     
+                    # Desconto: O selo vermelho "X% off" na foto
                     disc_el = item.query_selector("[class*='badge-percent-off'], [class*='savingsPercentage']")
                     if not disc_el: continue
                     
                     discount = int(''.join(filter(str.isdigit, disc_el.inner_text())))
                     
                     if discount >= MIN_DISCOUNT:
-                        link_el = item.query_selector("a")
+                        link_el = item.query_selector("a[class*='a-link-normal']")
                         link = link_el.get_attribute("href").split("?")[0]
                         full_link = link if link.startswith("http") else f"https://www.amazon.com.br{link}"
                         
-                        prod = {"title": title[:60], "discount": discount, "link": full_link, "price": "Confira!"}
+                        # Preço: Pegando a parte inteira (ex: R$ 174)
+                        price_el = item.query_selector(".a-price-whole")
+                        price = price_el.inner_text().strip() if price_el else "Ver no site"
+                        
+                        prod = {"title": title[:60], "discount": discount, "link": full_link, "price": f"R$ {price}"}
                         print(f"[SUCCESS] {discount}% OFF - {title[:30]}...")
                         send_to_discord(prod)
                 except: continue
