@@ -19,7 +19,7 @@ def save_id(asin):
 
 def run():
     print("=" * 60)
-    print("[START] Market Regressor — Versão Compacta")
+    print("[START] Market Regressor — Versão 3 Posts Compacta")
     print("=" * 60)
     
     processed_ids = load_processed_ids()
@@ -44,11 +44,13 @@ def run():
                 page.mouse.wheel(0, 1500)
                 page.wait_for_timeout(2000)
 
+            # Localiza os cards de produtos
             cards = page.query_selector_all("div:has(a[href*='/dp/'])")
             print(f"[INFO] Elementos detectados: {len(cards)}")
             
             for card in cards:
                 try:
+                    # 1. Link e ASIN
                     link_el = card.query_selector("a[href*='/dp/']")
                     if not link_el: continue
                     href = link_el.get_attribute("href")
@@ -58,10 +60,12 @@ def run():
 
                     if asin in processed_ids or asin in round_ids: continue
 
+                    # 2. Título
                     img = card.query_selector("img")
                     titulo = img.get_attribute("alt") if img else card.inner_text().split('\n')[0]
                     if len(titulo) < 10: continue
 
+                    # 3. Preços e Desconto
                     card_text = card.inner_text()
                     d_match = re.search(r'(\d+)%', card_text)
                     desconto_site = int(d_match.group(1)) if d_match else 0
@@ -85,11 +89,12 @@ def run():
                         p_por_val, p_por_str = vals[0]
                         p_de_val, p_de_str = 0, "---"
 
+                    # Validação matemática para evitar erros de leitura
                     if p_de_val > 0:
                         calc_desc = 100 - (p_por_val / p_de_val * 100)
                         if abs(calc_desc - desconto_site) > 20: continue 
 
-                    # --- MENSAGEM COMPACTA (Sem o \n extra) ---
+                    # --- MENSAGEM COMPACTA ---
                     msg = (f"📦 **OFERTA - {titulo[:90]}**\n"
                            f"💰 **DE {p_de_str} por {p_por_str} ({desconto_site}% OFF) 🔥**\n"
                            f"🛒 Compre: https://www.amazon.com.br/dp/{asin}?tag={AFFILIATE_TAG}")
@@ -100,7 +105,8 @@ def run():
                         round_ids.add(asin)
                         print(f"[SUCCESS] {asin}")
                         found_count += 1
-                        if found_count >= 10: break 
+                        # --- LIMITE DE 3 POSTAGENS ---
+                        if found_count >= 3: break 
 
                 except: continue
                 
