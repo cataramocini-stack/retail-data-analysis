@@ -4,51 +4,51 @@ from dotenv import load_dotenv
 import requests
 
 load_dotenv()
-
 DISCORD_WEBHOOK = os.getenv("INGESTION_ENDPOINT_PRIMARY")
-AFFILIATE_TAG = "gabriel01-20" # Tag genérica para teste
 
 def send_to_discord(product):
-    payload = {"content": f"🔥 **OFERTA NO MERCADO LIVRE!**\n📦 **{product['title']}**\n💰 Preço: {product['price']}\n📉 Desconto: {product['discount']}\n🔗 {product['link']}"}
-    try: requests.post(DISCORD_WEBHOOK, json=payload)
-    except: pass
+    payload = {"content": f"🔥 **TESTE DE CONEXÃO!**\n📦 **{product['title']}**\n🔗 {product['link']}"}
+    requests.post(DISCORD_WEBHOOK, json=payload)
 
 def run():
     print("="*60)
-    print("[START] Market Regressor — Teste Mercado Livre")
+    print("[START] Teste de Força Bruta")
     print("="*60)
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        # Lançamos o navegador com flags de 'humano'
+        browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
+        
+        # Simulamos um Windows real com resolução comum
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport={'width': 1280, 'height': 720}
+        )
         page = context.new_page()
         
-        print("[POLLING] Acessando Ofertas do Dia (Mercado Livre)...")
+        print("[POLLING] Tentando acessar o Google para testar internet...")
         try:
-            # ML é mais rápido e não bloqueia tanto IP de data center
-            page.goto("https://www.mercadolivre.com.br/ofertas", wait_until="domcontentloaded")
-            page.wait_for_selector(".promotion-item", timeout=20000)
+            # Teste 1: O robô consegue ver o Google?
+            page.goto("https://www.google.com", timeout=30000)
+            print(f"[OK] Internet está funcionando. Título: {page.title()}")
             
-            items = page.query_selector_all(".promotion-item")
-            print(f"[INFO] Itens detectados: {len(items)}")
+            # Teste 2: Mercado Livre simplificado
+            print("[POLLING] Tentando Mercado Livre...")
+            page.goto("https://www.mercadolivre.com.br", wait_until="domcontentloaded")
             
-            found_count = 0
-            for item in items:
-                try:
-                    title = item.query_selector(".promotion-item__title").inner_text().strip()
-                    price = item.query_selector(".andes-money-amount__fraction").inner_text().strip()
-                    discount = item.query_selector(".promotion-item__discount-text").inner_text().strip()
-                    link = item.query_selector("a").get_attribute("href")
-                    
-                    prod = {"title": title[:70], "price": f"R$ {price}", "discount": discount, "link": link}
-                    print(f"[SUCCESS] {discount} OFF - {title[:30]}")
-                    send_to_discord(prod)
-                    found_count += 1
-                    if found_count >= 5: break # Pegar só 5 para testar
-                except: continue
-                
-            print(f"[FINISHED] Enviados: {found_count}")
+            # Em vez de esperar seletor, vamos pegar o que tiver de link
+            page.wait_for_timeout(5000)
+            links = page.query_selector_all("a")
+            print(f"[INFO] Links encontrados: {len(links)}")
+            
+            if len(links) > 0:
+                print("[SUCCESS] O robô está conseguindo ler a página!")
+                send_to_discord({"title": "Bot Online e Lendo Páginas!", "link": "https://www.mercadolivre.com.br"})
+            else:
+                print("[FALHA] A página carregou, mas está vazia (bloqueio de script).")
+                page.screenshot(path="final_debug.png")
+
         except Exception as e:
-            print(f"[ERRO] Mercado Livre também bloqueou: {e}")
+            print(f"[ERRO CRÍTICO] Falha total de navegação: {e}")
         
         browser.close()
 
