@@ -19,7 +19,7 @@ def save_id(asin):
 
 def run():
     print("=" * 60)
-    print("[START] Market Regressor — Versão Final Premium")
+    print("[START] Market Regressor — Versão Final Ultra Precision")
     print("=" * 60)
     
     processed_ids = load_processed_ids()
@@ -37,55 +37,58 @@ def run():
             page.goto("https://www.amazon.com.br/ofertas", wait_until="load", timeout=60000)
             page.wait_for_timeout(5000)
             
-            # Mira nos containers de ofertas reais para evitar banners de 'Volta às aulas'
             cards = page.query_selector_all("[data-testid='grid-desktop-item']")
-            if not cards:
-                cards = page.query_selector_all("div:has(a[href*='/dp/'])")
+            if not cards: cards = page.query_selector_all("div:has(a[href*='/dp/'])")
                 
             print(f"[INFO] Elementos detectados: {len(cards)}")
             
             for card in cards:
                 try:
-                    # 1. ASIN (ID ÚNICO)
+                    # 1. ASIN
                     link_el = card.query_selector("a[href*='/dp/']")
                     if not link_el: continue
                     asin = re.search(r'/([A-Z0-9]{10})', link_el.get_attribute("href")).group(1)
                     if asin in processed_ids or asin in round_ids: continue
 
-                    # 2. TÍTULO (Prioridade absoluta para o ALT da imagem do produto)
+                    # 2. TÍTULO (ALT da imagem)
                     img = card.query_selector("img")
                     titulo = img.get_attribute("alt") if img else ""
-                    # Evita títulos de banners ou muito genéricos
                     if len(titulo) < 15 or "volta às aulas" in titulo.lower(): continue
 
-                    # 3. PREÇOS E DESCONTO (Extração focada apenas no CARD)
-                    card_html = card.inner_html() # Usar HTML ajuda a separar elementos visuais
+                    # 3. TEXTO E DESCONTO
                     card_text = card.inner_text()
-                    
                     d_match = re.search(r'(\d+)%', card_text)
                     if not d_match: continue
-                    desconto = d_match.group(1)
+                    desconto_site = int(d_match.group(1))
 
-                    # Busca preços R$ apenas se forem números com vírgula (formato real)
-                    precos = re.findall(r'R\$\s?[\d\.]+,[\d]{2}', card_text)
+                    # 4. PREÇOS COM VALIDAÇÃO MATEMÁTICA
+                    # Busca preços no formato R$ XX,XX
+                    precos_raw = re.findall(r'R\$\s?([\d\.]+,[\d]{2})', card_text)
                     vals = []
-                    for p_raw in precos:
+                    for p_raw in precos_raw:
                         try:
-                            v = float(p_raw.replace('R$', '').replace('.', '').replace(',', '.').strip())
-                            # Filtro de sanidade: ignora preços discrepantes demais (lógica de vizinhança)
-                            if v > 0: vals.append((v, p_raw))
+                            num = float(p_raw.replace('.', '').replace(',', '.').strip())
+                            if num > 5: vals.append((num, f"R$ {p_raw}"))
                         except: continue
                     
-                    if not vals: continue
-                    vals.sort()
+                    if len(vals) < 1: continue
+                    vals.sort() # Menor primeiro
                     
-                    # O menor preço encontrado no card é o 'POR', o maior é o 'DE'
-                    p_por = vals[0][1]
-                    p_de = vals[-1][1] if len(vals) > 1 else "---"
+                    p_por_val, p_por_str = vals[0]
+                    p_de_val, p_de_str = vals[-1] if len(vals) > 1 else (0, "---")
 
-                    # 4. ENVIO FORMATADO
+                    # VALIDAÇÃO DE SEGURANÇA:
+                    # Se o preço "DE" for absurdamente maior que o "POR" (ex: 9000 vs 170)
+                    # e o desconto não condiz com essa diferença, usamos apenas o preço "POR"
+                    if p_de_val > 0:
+                        desc_real = 100 - (p_por_val / p_de_val * 100)
+                        # Se a diferença entre o desconto do site e o real for maior que 15%
+                        if abs(desc_real - desconto_site) > 15:
+                            p_de_str = "---" 
+
+                    # 5. POSTAGEM
                     msg = (f"📦 **OFERTA - {titulo[:95]} - "
-                           f"DE {p_de} por {p_por} ({desconto}% OFF) 🔥**\n"
+                           f"DE {p_de_str} por {p_por_str} ({desconto_site}% OFF) 🔥**\n"
                            f"https://www.amazon.com.br/dp/{asin}?tag={AFFILIATE_TAG}")
                     
                     res = requests.post(DISCORD_WEBHOOK, json={"content": msg}, timeout=15)
@@ -97,8 +100,7 @@ def run():
                         if found_count >= 5: break
                 except: continue
                 
-        except Exception as e:
-            print(f"[ERRO] {e}")
+        except Exception as e: print(f"[ERRO] {e}")
         finally:
             browser.close()
             print(f"[FINISHED] Enviados: {found_count}")
