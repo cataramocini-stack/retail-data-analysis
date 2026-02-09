@@ -22,11 +22,13 @@ jobs:
       - name: 🐍 Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11" # Alterado para 3.11 para garantir compatibilidade com pkg_resources
 
       - name: 📦 Instalar dependências
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
+          # Instalamos o setuptools primeiro para fornecer o pkg_resources que o stealth_sync exige
+          pip install setuptools==70.0.0
           pip install -r requirements.txt
           playwright install chromium
           playwright install-deps chromium
@@ -37,7 +39,7 @@ jobs:
           AFFILIATION_DATA_METRIC: ${{ secrets.AFFILIATION_DATA_METRIC }}
         run: python market_regressor_engine.py
 
-      - name: � Salvar screenshot de debug
+      - name: 📸 Salvar screenshot de debug
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -46,10 +48,17 @@ jobs:
           retention-days: 3
           if-no-files-found: ignore
 
-      - name: �🔄 Commit e Push automático
+      - name: 🔄 Commit e Push automático
         run: |
           git config user.name "Market Regressor Bot"
           git config user.email "bot@market-regressor.local"
+          
+          # Verifica se o ficheiro de base de dados foi alterado
           git add processed_metadata.db
-          git diff --cached --quiet || git commit -m "sync: update processed_metadata.db with latest regression output"
-          git push
+          
+          if git diff --cached --quiet; then
+            echo "Nenhuma nova oferta processada. Nada para commitar."
+          else
+            git commit -m "data: update processed metadata store [skip ci]"
+            git push
+          fi
