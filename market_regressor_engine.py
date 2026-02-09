@@ -7,6 +7,7 @@ load_dotenv()
 
 DISCORD_WEBHOOK = os.getenv("INGESTION_ENDPOINT_PRIMARY")
 AFFILIATE_TAG = os.getenv("AFFILIATION_DATA_METRIC", "scriptoriu01a-20")
+MIN_DISCOUNT = 5
 
 def send_to_discord(product):
     payload = {"content": f"🚨 **OFERTA ENCONTRADA!**\n📦 **{product['title']}**\n💰 Preço: {product['price']}\n📉 Desconto: {product['discount']}%\n🔗 {product['link']}?tag={AFFILIATE_TAG}"}
@@ -15,70 +16,55 @@ def send_to_discord(product):
 
 def run():
     print("="*60)
-    print("[START] Market Regressor — Modo Ultra Stealth")
+    print("[START] Market Regressor — Calibragem por Imagem")
     print("="*60)
     with sync_playwright() as p:
-        # Mudança chave: Lançamos o Chromium com flags que escondem o WebDriver
         browser = p.chromium.launch(headless=True)
-        
-        # Criamos um contexto com uma resolução de tela comum e User-Agent atualizado
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            viewport={'width': 1280, 'height': 720}
-        )
+        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         page = context.new_page()
         
-        # Vamos usar a URL de promoções diretas (menos scripts que a página de 'ofertas' geral)
-        target_url = "https://www.amazon.com.br/gp/goldbox?ref_=nav_cs_gb"
-        
-        print(f"[POLLING] Acessando: {target_url}")
+        print("[POLLING] Acessando vitrine de ofertas...")
         try:
-            # Esperamos o carregamento básico
-            page.goto(target_url, wait_until="commit", timeout=90000)
-            
-            # Simulamos um humano esperando e rolando a página
-            print("[INFO] Estabilizando página...")
-            page.wait_for_timeout(7000)
-            page.mouse.wheel(0, 500)
-            page.wait_for_timeout(3000)
+            page.goto("https://www.amazon.com.br/ofertas", wait_until="load")
+            page.wait_for_timeout(10000) # Tempo para carregar os cards da imagem
 
-            # Tentamos capturar os links de produtos que contêm a palavra "deal" ou "offer"
-            # Esse seletor é mais robusto para o que vimos na sua foto
-            links = page.query_selector_all("a[href*='/dp/'], a[href*='/gp/slredirect/']")
-            print(f"[INFO] Links candidatos encontrados: {len(links)}")
+            # Pega todos os cards que vimos na sua foto
+            items = page.query_selector_all("[data-testid='grid-desktop-item']")
+            print(f"[INFO] Cards detectados: {len(items)}")
             
             found_count = 0
-            for link_el in links:
+            for item in items:
                 try:
-                    # Se achamos um link que tem cara de produto, tentamos ver se ele tem desconto perto
-                    parent = link_el.query_selector_xpath("..") # Sobe um nível no HTML
-                    text_content = parent.inner_text() if parent else ""
-                    
-                    if "%" in text_content or "off" in text_content.lower():
-                        title = link_el.inner_text().strip() or "Produto em Oferta"
+                    # 1. Busca o desconto (o selo vermelho 'off' da foto)
+                    disc_el = item.query_selector("[class*='badge-percent-off'], [class*='savingsPercentage']")
+                    if not disc_el: continue
+                    discount = int(''.join(filter(str.isdigit, disc_el.inner_text())))
+
+                    if discount >= MIN_DISCOUNT:
+                        # 2. Busca o título (o link logo abaixo do preço)
+                        title_el = item.query_selector("a span.a-truncate-cut, h3")
+                        title = title_el.inner_text().strip() if title_el else "Produto em Oferta"
+                        
+                        # 3. Busca o link
+                        link_el = item.query_selector("a")
                         link = link_el.get_attribute("href").split("?")[0]
                         full_link = link if link.startswith("http") else f"https://www.amazon.com.br{link}"
                         
-                        # Se o título for muito curto, ignoramos (evita pegar 'Ver Detalhes')
-                        if len(title) < 5: continue
-                        
-                        prod = {"title": title[:70], "discount": "Ver no site", "link": full_link, "price": "Em promoção"}
-                        print(f"[SUCCESS] Detectado: {title[:40]}")
-                        send_count += 1
-                        if found_count <= 5: # Limite para não inundar o Discord no teste
-                            send_to_discord(prod)
-                            found_count += 1
+                        # 4. Busca o preço
+                        price_el = item.query_selector(".a-price-whole")
+                        price = f"R$ {price_el.inner_text().strip()}" if price_el else "Confira no site"
+
+                        prod = {"title": title[:70], "discount": discount, "link": full_link, "price": price}
+                        print(f"[SUCCESS] {discount}% OFF - {title[:30]}...")
+                        send_to_discord(prod)
+                        found_count += 1
                 except: continue
                 
-            if found_count == 0:
-                print("[!] Ainda sem itens. Capturando estado final para análise...")
-                page.screenshot(path="failed_state.png")
-
         except Exception as e:
-            print(f"[ERRO FATAL] {e}")
+            print(f"[ERRO] {e}")
         
         browser.close()
-        print(f"[FINISHED] Processo finalizado. Itens enviados: {found_count}")
+        print(f"[FINISHED] Itens enviados nesta rodada: {found_count}")
 
 if __name__ == "__main__":
     run()
