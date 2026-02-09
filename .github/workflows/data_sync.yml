@@ -2,7 +2,6 @@ name: Market Volatility Analysis Pipeline
 
 on:
   schedule:
-    # Executa a cada 20 minutos
     - cron: "*/20 * * * *"
   workflow_dispatch:
 
@@ -22,27 +21,16 @@ jobs:
       - name: 🐍 Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11" # Versão estável para automação com Playwright Stealth
+          python-version: "3.10" # Mudamos para 3.10 por ser a versão mais estável para Scrapers
 
       - name: 📦 Instalar dependências
         run: |
           python -m pip install --upgrade pip
-          
-          # FORÇA a instalação de uma versão do setuptools que contém o pkg_resources
-          # Usamos a versão 69 para garantir compatibilidade total
+          # Instalamos o setuptools via comando de sistema para garantir presença no PATH
           pip install "setuptools<70.0.0"
-          
-          # Instala as demais dependências do projeto
           pip install -r requirements.txt
-          
-          # Instala o navegador Chromium necessário para o scraping
           playwright install chromium
           playwright install-deps chromium
-
-      - name: 🔍 Validar ambiente
-        run: |
-          # Teste rápido: Se falhar aqui, o log nos dirá exatamente o porquê
-          python -c "import pkg_resources; print('✅ Módulo pkg_resources carregado com sucesso!')"
 
       - name: 🚀 Execute Stochastic Price Polling
         env:
@@ -62,4 +50,11 @@ jobs:
       - name: 🔄 Commit e Push automático
         run: |
           git config user.name "Market Regressor Bot"
-          git config user.email "bot@market
+          git config user.email "bot@market-regressor.local"
+          git add processed_metadata.db
+          if git diff --cached --quiet; then
+            echo "Nada para salvar."
+          else
+            git commit -m "data: update processed metadata store [skip ci]"
+            git push
+          fi
