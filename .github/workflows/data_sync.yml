@@ -2,8 +2,9 @@ name: Market Volatility Analysis Pipeline
 
 on:
   schedule:
-    # Frequência máxima permitida (cada 5 minutos)
-    - cron: "*/5 * * * *"
+    # Roda a cada 5 minutos, mas deslocado para o minuto 3
+    # Ex: 10:03, 10:08, 10:13... evitando conflito com Steam (00) e Twitch (05)
+    - cron: "3-59/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -26,6 +27,7 @@ jobs:
       - name: 📦 Instalar dependências
         run: |
           pip install --upgrade pip
+          pip install "setuptools<70.0.0"
           pip install -r requirements.txt
           playwright install chromium
           playwright install-deps chromium
@@ -35,16 +37,13 @@ jobs:
           INGESTION_ENDPOINT_PRIMARY: ${{ secrets.INGESTION_ENDPOINT_PRIMARY }}
           AFFILIATION_DATA_METRIC: ${{ secrets.AFFILIATION_DATA_METRIC }}
         run: |
-          # Rodada 1: Executa imediatamente
-          echo "Iniciando Rodada 1..."
+          # Rodada 1
           python market_regressor_engine.py
           
-          # Pausa de 100 segundos para dar tempo de novas ofertas aparecerem
-          echo "Aguardando 100 segundos para rotação de cache..."
+          # Pausa estratégica para pegar a próxima oferta
           sleep 100
           
-          # Rodada 2: Executa novamente no mesmo container
-          echo "Iniciando Rodada 2..."
+          # Rodada 2
           python market_regressor_engine.py
 
       - name: 🔄 Sincronizar Banco de Dados
@@ -53,5 +52,4 @@ jobs:
           git config user.name "Market Regressor Bot"
           git config user.email "bot@market-regressor.local"
           git add processed_metadata.db
-          # Só faz o push se houver novos itens processados no banco de dados 
           git diff --cached --quiet || (git commit -m "sync: update metadata store" && git push)
