@@ -19,72 +19,72 @@ def save_id(asin):
 
 def run():
     print("=" * 60)
-    print("[START] Market Regressor — Versão Final Estabilizada")
+    print("[START] Market Regressor — Versão Final Premium")
     print("=" * 60)
     
     processed_ids = load_processed_ids()
     round_ids = set()
-    found_count = 0 # Inicializado aqui para evitar erro de variável
+    found_count = 0
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        # User-agent atualizado
-        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         context = browser.new_context(user_agent=ua, viewport={'width': 1280, 'height': 720})
         page = context.new_page()
         
         try:
             print("[POLLING] Acessando Amazon...")
-            # Mudança: 'load' é mais rápido e menos propenso a timeout que 'networkidle'
             page.goto("https://www.amazon.com.br/ofertas", wait_until="load", timeout=60000)
-            
             page.wait_for_timeout(5000)
-            page.mouse.wheel(0, 800)
-            page.wait_for_timeout(3000)
             
-            # Busca por links de produtos
-            cards = page.query_selector_all("div:has(a[href*='/dp/'])")
+            # Mira nos containers de ofertas reais para evitar banners de 'Volta às aulas'
+            cards = page.query_selector_all("[data-testid='grid-desktop-item']")
+            if not cards:
+                cards = page.query_selector_all("div:has(a[href*='/dp/'])")
+                
             print(f"[INFO] Elementos detectados: {len(cards)}")
             
             for card in cards:
                 try:
+                    # 1. ASIN (ID ÚNICO)
                     link_el = card.query_selector("a[href*='/dp/']")
                     if not link_el: continue
-                    
-                    href = link_el.get_attribute("href")
-                    asin_match = re.search(r'/([A-Z0-9]{10})', href)
-                    if not asin_match: continue
-                    asin = asin_match.group(1)
-                    
+                    asin = re.search(r'/([A-Z0-9]{10})', link_el.get_attribute("href")).group(1)
                     if asin in processed_ids or asin in round_ids: continue
 
-                    txt = card.inner_text()
-                    d_match = re.search(r'(\d+)%', txt)
-                    if not d_match: continue
-                    desconto = d_match.group(1)
-                    if int(desconto) < 15: continue
-
-                    # Título via ALT da imagem (o mais limpo)
+                    # 2. TÍTULO (Prioridade absoluta para o ALT da imagem do produto)
                     img = card.query_selector("img")
                     titulo = img.get_attribute("alt") if img else ""
-                    if len(titulo) < 10: continue
+                    # Evita títulos de banners ou muito genéricos
+                    if len(titulo) < 15 or "volta às aulas" in titulo.lower(): continue
 
-                    # Preços
-                    precos = re.findall(r'R\$\s?[\d.,]+', txt)
+                    # 3. PREÇOS E DESCONTO (Extração focada apenas no CARD)
+                    card_html = card.inner_html() # Usar HTML ajuda a separar elementos visuais
+                    card_text = card.inner_text()
+                    
+                    d_match = re.search(r'(\d+)%', card_text)
+                    if not d_match: continue
+                    desconto = d_match.group(1)
+
+                    # Busca preços R$ apenas se forem números com vírgula (formato real)
+                    precos = re.findall(r'R\$\s?[\d\.]+,[\d]{2}', card_text)
                     vals = []
                     for p_raw in precos:
                         try:
                             v = float(p_raw.replace('R$', '').replace('.', '').replace(',', '.').strip())
-                            if v not in [x[0] for x in vals]: vals.append((v, p_raw))
+                            # Filtro de sanidade: ignora preços discrepantes demais (lógica de vizinhança)
+                            if v > 0: vals.append((v, p_raw))
                         except: continue
                     
                     if not vals: continue
                     vals.sort()
+                    
+                    # O menor preço encontrado no card é o 'POR', o maior é o 'DE'
                     p_por = vals[0][1]
                     p_de = vals[-1][1] if len(vals) > 1 else "---"
 
-                    # Formatação idêntica ao seu pedido
-                    msg = (f"📦 **OFERTA - {titulo[:90]} - "
+                    # 4. ENVIO FORMATADO
+                    msg = (f"📦 **OFERTA - {titulo[:95]} - "
                            f"DE {p_de} por {p_por} ({desconto}% OFF) 🔥**\n"
                            f"https://www.amazon.com.br/dp/{asin}?tag={AFFILIATE_TAG}")
                     
