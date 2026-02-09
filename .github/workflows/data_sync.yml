@@ -2,7 +2,7 @@ name: Market Volatility Analysis Pipeline
 
 on:
   schedule:
-    - cron: "*/20 * * * *"
+    - cron: "*/20 * * * *" # Roda a cada 20 minutos
   workflow_dispatch:
 
 permissions:
@@ -15,46 +15,34 @@ jobs:
     steps:
       - name: 📥 Checkout do repositório
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🐍 Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10" # Mudamos para 3.10 por ser a versão mais estável para Scrapers
+          python-version: "3.11"
 
       - name: 📦 Instalar dependências
         run: |
           python -m pip install --upgrade pip
-          # Instalamos o setuptools via comando de sistema para garantir presença no PATH
           pip install "setuptools<70.0.0"
           pip install -r requirements.txt
           playwright install chromium
           playwright install-deps chromium
 
-      - name: 🚀 Execute Stochastic Price Polling
+      - name: 🚀 Executar Bot
         env:
           INGESTION_ENDPOINT_PRIMARY: ${{ secrets.INGESTION_ENDPOINT_PRIMARY }}
           AFFILIATION_DATA_METRIC: ${{ secrets.AFFILIATION_DATA_METRIC }}
         run: python market_regressor_engine.py
 
-      - name: 📸 Salvar screenshot de debug
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-screenshot
-          path: ./debug.png
-          retention-days: 3
-          if-no-files-found: ignore
-
-      - name: 🔄 Commit e Push automático
+      - name: 🔄 Salvar Histórico
         run: |
           git config user.name "Market Regressor Bot"
           git config user.email "bot@market-regressor.local"
           git add processed_metadata.db
           if git diff --cached --quiet; then
-            echo "Nada para salvar."
+            echo "Nada para atualizar."
           else
-            git commit -m "data: update processed metadata store [skip ci]"
+            git commit -m "update: database sync [skip ci]"
             git push
           fi
