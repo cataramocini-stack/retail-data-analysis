@@ -16,46 +16,52 @@ def send_to_discord(product):
 
 def run():
     print("="*60)
-    print("[START] Market Regressor — Ajuste de Grid Detectado")
+    print("[START] Market Regressor — Teste de Carregamento Forçado")
     print("="*60)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         page = context.new_page()
         
-        print("[POLLING] Acessando a vitrine de ofertas...")
+        print("[POLLING] Abrindo Amazon...")
         try:
-            # Acessando a URL exata da sua foto
-            page.goto("https://www.amazon.com.br/ofertas", wait_until="domcontentloaded")
-            page.wait_for_timeout(10000) # Tempo para carregar os cards da imagem
+            page.goto("https://www.amazon.com.br/ofertas", wait_until="load", timeout=90000)
             
-            # Novo seletor baseado no grid da sua imagem
-            items = page.query_selector_all("[data-testid='grid-desktop-item']")
-            print(f"[INFO] Itens detectados no grid: {len(items)}")
+            # AJUSTE CHAVE: Espera o elemento do grid aparecer fisicamente na página
+            print("[INFO] Aguardando o grid de produtos aparecer...")
+            try:
+                page.wait_for_selector("[data-testid='grid-desktop-item']", timeout=20000)
+            except:
+                print("[AVISO] Grid padrão não apareceu, tentando ler o que tem disponível...")
+
+            # Rola a página para baixo para carregar o "lazy load"
+            page.evaluate("window.scrollBy(0, 800)")
+            page.wait_for_timeout(3000)
+            
+            # Captura tudo que parece um item de oferta
+            items = page.query_selector_all("[data-testid='grid-desktop-item'], [class*='DealGridItem'], .a-section.list-item")
+            print(f"[INFO] Itens detectados: {len(items)}")
             
             for item in items:
                 try:
-                    # Título: Na foto, ele usa uma classe de truncamento
-                    title_el = item.query_selector("a[class*='a-link-normal'] span, [class*='Title']")
-                    title = title_el.inner_text().strip() if title_el else "Produto sem título"
+                    # Tenta pegar o título de várias formas
+                    title_el = item.query_selector(".a-truncate-cut, h3, [class*='dealTitleText'], a span")
+                    if not title_el: continue
+                    title = title_el.inner_text().strip()
                     
-                    # Desconto: O selo vermelho "X% off" na foto
-                    disc_el = item.query_selector("[class*='badge-percent-off'], [class*='savingsPercentage']")
+                    # Procura o desconto
+                    disc_el = item.query_selector("[class*='badge-percent-off'], [class*='savingsPercentage'], .a-badge-text")
                     if not disc_el: continue
                     
                     discount = int(''.join(filter(str.isdigit, disc_el.inner_text())))
                     
                     if discount >= MIN_DISCOUNT:
-                        link_el = item.query_selector("a[class*='a-link-normal']")
+                        link_el = item.query_selector("a")
                         link = link_el.get_attribute("href").split("?")[0]
                         full_link = link if link.startswith("http") else f"https://www.amazon.com.br{link}"
                         
-                        # Preço: Pegando a parte inteira (ex: R$ 174)
-                        price_el = item.query_selector(".a-price-whole")
-                        price = price_el.inner_text().strip() if price_el else "Ver no site"
-                        
-                        prod = {"title": title[:60], "discount": discount, "link": full_link, "price": f"R$ {price}"}
-                        print(f"[SUCCESS] {discount}% OFF - {title[:30]}...")
+                        prod = {"title": title[:60], "discount": discount, "link": full_link, "price": "Confira no link"}
+                        print(f"[SUCCESS] {discount}% OFF - {title[:30]}")
                         send_to_discord(prod)
                 except: continue
         except Exception as e:
