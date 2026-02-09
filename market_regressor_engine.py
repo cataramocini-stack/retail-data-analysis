@@ -85,4 +85,10 @@ def run():
                         found_count += 1
                         if found_count >= 5: break
                 except: continue
-        except Exception as e:
+        except Exception as e: print(f"[ERRO] {e}")
+        finally:
+            browser.close()
+            print(f"[FINISHED] Enviados: {found_count}")
+
+if __name__ == "__main__":
+    run()
