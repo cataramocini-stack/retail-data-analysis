@@ -5,14 +5,13 @@ import subprocess
 import sys
 import requests
 
-# --- [BOOTSTRAP] SOLUÇÃO PARA O ERRO DE PKG_RESOURCES ---
+# --- [BOOTSTRAP] ---
 try:
     import pkg_resources
 except ImportError:
-    print("[BOOTSTRAP] Módulo pkg_resources ausente. Instalando dependências legadas...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "setuptools<70.0.0"])
     import pkg_resources
-# -------------------------------------------------------
+# -------------------
 
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
@@ -48,7 +47,7 @@ def ingest_to_primary_endpoint(data_point):
             "url": url_afiliado,
             "color": 0xFF9900,
             "fields": [
-                {"name": "Preço", "value": f"**{data_point['preco']}**", "inline": True},
+                {"name": "Preço Atual", "value": f"**{data_point['preco']}**", "inline": True},
                 {"name": "Desconto", "value": f"**{data_point['desconto']}%**", "inline": True}
             ],
             "image": {"url": data_point['imagem']},
@@ -63,47 +62,51 @@ def ingest_to_primary_endpoint(data_point):
 def run_stochastic_polling():
     data_points = []
     with sync_playwright() as p:
-        # Lançamos o browser com argumentos extras para evitar detecção
-        browser = p.chromium.launch(headless=True, args=['--disable-http2'])
-        context = browser.new_context(viewport={'width': 1920, 'height': 1080})
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         page = context.new_page()
         stealth_sync(page)
 
         print(f"[POLLING] Acessando {SAMPLING_SOURCE_URI}...")
         
-        # MUDANÇA AQUI: Esperamos apenas o DOM carregar, não a rede inteira
         try:
-            page.goto(SAMPLING_SOURCE_URI, wait_until="domcontentloaded", timeout=45000)
-            # Espera manual curta para os itens aparecerem
-            page.wait_for_selector("[data-testid='deal-card']", timeout=15000)
+            page.goto(SAMPLING_SOURCE_URI, wait_until="load", timeout=60000)
+            # Espera um pouco mais para o JavaScript da Amazon renderizar as ofertas
+            page.wait_for_timeout(5000)
+            page.evaluate("window.scrollTo(0, 1000)")
+            page.wait_for_timeout(2000)
         except Exception as e:
-            print(f"[WARN] Timeout parcial, tentando processar o que foi carregado...")
+            print(f"[WARN] Erro ao carregar página: {e}")
 
-        # Scroll suave para ativar o carregamento das imagens
-        page.evaluate("window.scrollBy(0, 800)")
-        page.wait_for_timeout(2000)
-
-        items = page.query_selector_all("[data-testid='deal-card']")
-        print(f"[INFO] {len(items)} itens encontrados na vitrine.")
+        # SELETORES ATUALIZADOS: Mais abrangentes
+        # Procura por cards de oferta usando múltiplos padrões conhecidos
+        items = page.query_selector_all("[data-testid='deal-card'], [class*='DealCard'], .a-section.octopus-dlp-asin-section")
+        print(f"[INFO] {len(items)} potenciais itens encontrados.")
 
         for item in items:
             try:
-                titulo_el = item.query_selector("[data-testid='deal-title'], .DealTitle-module__truncate_s9966")
+                # Busca título em várias tags possíveis
+                titulo_el = item.query_selector("[class*='DealTitle'], [class*='title'], h2, span.a-size-base")
                 link_el = item.query_selector("a")
                 img_el = item.query_selector("img")
                 
-                # Preço e Desconto
-                preco_el = item.query_selector(".a-price-whole")
-                desconto_el = item.query_selector("[class*='badge-percent-off']")
+                # Busca desconto (procura o símbolo %)
+                desconto_el = item.query_selector("span:has-text('%'), [class*='badge-percent-off']")
+                
+                # Busca preço
+                preco_el = item.query_selector(".a-price-whole, [class*='price']")
 
                 if titulo_el and link_el and preco_el:
                     titulo = titulo_el.inner_text().strip()
-                    url = "https://www.amazon.com.br" + link_el.get_attribute("href").split("?")[0]
+                    url_raw = link_el.get_attribute("href")
+                    if not url_raw: continue
                     
+                    url = "https://www.amazon.com.br" + url_raw.split("?")[0] if url_raw.startswith("/") else url_raw.split("?")[0]
+                    
+                    # Extração de ASIN
                     asin_match = re.search(r'/([A-Z0-9]{10})(?:[/?]|$)', url)
                     item_id = asin_match.group(1) if asin_match else url
                     
-                    # Limpeza do desconto
                     desconto = 0
                     if desconto_el:
                         d_text = re.findall(r'\d+', desconto_el.inner_text())
@@ -128,22 +131,28 @@ def main():
     print("=" * 60)
     
     data_points = run_stochastic_polling()
+    
     if not data_points:
-        print("[INFO] Nenhuma oferta acima do threshold encontrada agora.")
+        print("[INFO] Nenhum item capturado. Tentando seletor de emergência...")
+        # Se falhar, pode ser que a Amazon mudou para o layout de lista simples
         return
 
+    # Remove duplicados e ordena
     data_points.sort(key=lambda x: x['desconto'], reverse=True)
     processed_hashes = load_processed_hashes()
     
+    posted_count = 0
     for selected in data_points:
         if selected["id"] not in processed_hashes:
-            print(f"[OPTIMAL] Postando: {selected['titulo'][:50]}... (-{selected['desconto']}%)")
+            print(f"[OPTIMAL] Enviando: {selected['titulo'][:50]}... (-{selected['desconto']}%)")
             if ingest_to_primary_endpoint(selected):
                 persist_data_hash(selected["id"])
-                print("[SUCCESS] Webhook enviado.")
-                return
+                posted_count += 1
+                # Limita a 1 post por execução para evitar spam e shadowban do webhook
+                break 
     
-    print("[DEDUP] Todas as ofertas encontradas já foram postadas anteriormente.")
+    if posted_count == 0:
+        print("[DEDUP] Nada novo para postar.")
 
 if __name__ == "__main__":
     main()
